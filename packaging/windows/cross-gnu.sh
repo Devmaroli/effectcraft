@@ -5,6 +5,7 @@
 #
 #   ./packaging/windows/cross-gnu.sh
 #   DIST=/tmp/out ./packaging/windows/cross-gnu.sh
+#   SKIP_BUILD=1 DIST=/tmp/out ./packaging/windows/cross-gnu.sh   # reuse already-built exes
 #
 # Needs: rustup target x86_64-pc-windows-gnu, gcc-mingw-w64-x86-64, zip.
 # Optional: wine, to smoke-test effectcraft-cli.exe --version.
@@ -39,7 +40,9 @@ fi
 export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER="${CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER:-x86_64-w64-mingw32-gcc}"
 export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS="${CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS:--C link-arg=-static-libgcc -C link-arg=-static-libstdc++}"
 
-cargo build --release --locked -p effectcraft -p effectcraft-cli --target "$Target"
+if [[ "${SKIP_BUILD:-}" != "1" ]]; then
+  cargo build --release --locked -p effectcraft -p effectcraft-cli --target "$Target"
+fi
 
 Bin="$Root/target/$Target/release"
 test -f "$Bin/effectcraft.exe"
@@ -61,10 +64,15 @@ copy_dll() {
   fi
 }
 # If ldd-style listing is available via objdump, pick up needed mingw DLLs.
+# grep exits 1 when none match (fully static libgcc); `|| true` keeps pipefail from aborting.
 if command -v x86_64-w64-mingw32-objdump >/dev/null; then
-  x86_64-w64-mingw32-objdump -p "$Bin/effectcraft.exe" "$Bin/effectcraft-cli.exe" \
-    | awk '/DLL Name:/{print $3}' | sort -u | grep -iE 'libgcc|libstdc|libwinpthread|libssp' \
-    | while read -r dll; do copy_dll "$dll"; done
+  dlls="$(
+    x86_64-w64-mingw32-objdump -p "$Bin/effectcraft.exe" "$Bin/effectcraft-cli.exe" \
+      | awk '/DLL Name:/{print $3}' | sort -u | grep -iE 'libgcc|libstdc|libwinpthread|libssp' || true
+  )"
+  while IFS= read -r dll; do
+    [[ -n "$dll" ]] && copy_dll "$dll"
+  done <<< "$dlls"
 fi
 
 cp "$Root/packaging/windows/README-Windows.txt" "$Stage/"
