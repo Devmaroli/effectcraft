@@ -521,13 +521,13 @@ write, process spawn. Findings by severity. **Fixed** items have tests in this f
 
 ### Accepted (not treated as bugs)
 
-- Any local process on `127.0.0.1:<port>` can receive the saved project path. Unauthenticated
-  localhost IPC; URL is still loopback-only, never DNS.
 - `inbox` / `output` command params can be any absolute path, like `file.saveAs`.
 - A same-uid binary named `encodecraft` beside the GUI is trusted (if an attacker can plant
   that, they can replace `effectcraft`).
-- Live E2E against a running EncodeCraft was **not** run (Origin clone had no token). Loopback
-  HTTP + inbox are unit-tested.
+- Loopback IPC is **token-gated** (`X-EncodeCraft-Token` / `ENCODECRAFT_TOKEN` /
+  `<data dir>/ipc-token`). GET `/health` stays unauthenticated so we can detect a running
+  encoder. A mock server that enforces token, loopback Host, and Origin / Sec-Fetch-Site
+  rules is covered by engine tests.
 
 Screen Suite must not weaken this: freeze/screenshot/rename must not spawn PATH binaries; matcher
 folder paths should be absolute user-chosen directories; EncodeCraft remains save-first.

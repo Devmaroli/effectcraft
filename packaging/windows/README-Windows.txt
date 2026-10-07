@@ -61,8 +61,11 @@ A few things that help
 - Always save the project before Add to EncodeCraft Queue. EncodeCraft
   renders the file on disk, not unsaved work in the window.
 - EncodeCraft should be installed and, the first time, started once so it
-  can create its inbox folder. After that, EffectCraft will start it if it
-  is not already running.
+  can create its inbox folder and an ipc-token file. EffectCraft sends
+  that token on every queue request (or ENCODECRAFT_TOKEN). If you see
+  "Open EncodeCraft once so it can set up the connection", start EncodeCraft
+  and try again. After that, EffectCraft will start it if it is not already
+  running.
 - This zip is 64-bit Windows 10 or 11. It will not run on 32-bit Windows.
 
 If a .dll is missing

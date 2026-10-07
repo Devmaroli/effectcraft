@@ -1,20 +1,21 @@
 //! Composition ▸ Add to EncodeCraft Queue (After Effects' Add to Adobe Media Encoder Queue).
 //!
 //! Sends the active composition and the **saved** project path to EncodeCraft:
-//! 1. `POST http://127.0.0.1:9878/v1/enqueue` (loopback HTTP/1.1, no extra HTTP crate)
-//! 2. if that is down, the same JSON is written to EncodeCraft's inbox and the app is launched
+//! 1. `GET /health` (unauthenticated) to see if EncodeCraft is up
+//! 2. `POST /v1/enqueue` with `X-EncodeCraft-Token` (loopback HTTP/1.1, no extra HTTP crate)
+//! 3. if that is down, the same JSON is written to EncodeCraft's inbox and the app is launched
 //!
 //! Desktop only. The web build returns a clear "desktop app" error (no localhost encoder).
 //!
-//! Security: the HTTP client only connects to 127.0.0.1 (never DNS), rejects CR/LF in URLs,
-//! writes inbox files with `create_new` (no overwrite / symlink clobber), and only launches
-//! EncodeCraft from absolute paths that already exist (never `PATH`; macOS uses `/usr/bin/open`).
+//! Security: loopback only (never DNS); IPC token required when the encoder is running;
+//! no Origin / Sec-Fetch-Site headers; inbox `create_new`; launch from absolute existing
+//! paths only (never `PATH`; macOS uses `/usr/bin/open`).
 
 use std::path::{Path, PathBuf};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
-use encodecraft_job::{DEFAULT_ENQUEUE_URL, Job};
+use encodecraft_job::{DEFAULT_ENQUEUE_URL, Job, MAX_CONTROL_BODY, TOKEN_HEADER, discover_ipc_token, is_health_ok, sanitize_token};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, has_comp, str_p};
@@ -23,6 +24,7 @@ use crate::{EngineError, Result, Session};
 const CMD: &str = "encodecraft.queue";
 const UNSAVED: &str =
     "Save the project before adding it to the EncodeCraft Queue (File ▸ Save). EncodeCraft renders the file on disk, so unsaved changes would be missing.";
+const SETUP_TOKEN: &str = "Open EncodeCraft once so it can set up the connection";
 #[cfg(target_arch = "wasm32")]
 const DESKTOP_ONLY: &str = "Add to EncodeCraft Queue is only available in the desktop app";
 #[cfg(not(target_arch = "wasm32"))]
@@ -36,7 +38,6 @@ const LAUNCH_RETRY_WAIT: Duration = Duration::from_millis(200);
 #[cfg(not(target_arch = "wasm32"))]
 const MAX_RESPONSE: usize = 64 * 1024;
 const MAX_RESULT_BODY: usize = 1024;
-const MAX_JOB_BYTES: usize = 256 * 1024;
 const MAX_INBOX_PATH: usize = 4096;
 const MAX_INBOX_NAME_TRIES: u32 = 32;
 
@@ -67,61 +68,93 @@ fn queue_native(s: &mut Session, p: &Value) -> Result<Value> {
         validate_output_path(out).map_err(EngineError::Other)?;
         job.output = Some(out.to_string());
     }
+    // Never set output_dir: EncodeCraft only accepts paths inside its configured output folder
+    // and suffixes existing files with -2, -3 instead of overwriting.
+    job.output_dir = None;
     if let Some(fmt) = str_p(p, "format") {
         validate_format(fmt).map_err(EngineError::Other)?;
         job.format = Some(fmt.to_string());
     }
     let url = str_p(p, "url").map(str::to_string).or_else(|| std::env::var("ENCODECRAFT_URL").ok()).unwrap_or_else(|| DEFAULT_ENQUEUE_URL.into());
     parse_loopback_http_url(&url).map_err(EngineError::Other)?;
+    let health = health_url_for(&url).map_err(EngineError::Other)?;
     let inbox = match str_p(p, "inbox") {
         Some(p) => Some(validate_inbox_dir(Path::new(p)).map_err(EngineError::Other)?),
         None => inbox_dir(),
     };
     let launch = b_launch(p);
+    let token = match str_p(p, "token") {
+        Some(raw) => Some(sanitize_token(raw).ok_or_else(|| EngineError::Other(SETUP_TOKEN.into()))?),
+        None => discover_ipc_token(),
+    };
     let body = serde_json::to_string(&job).map_err(|e| EngineError::Other(format!("cannot encode the EncodeCraft job: {e}")))?;
-    if body.len() > MAX_JOB_BYTES {
+    if body.len() > MAX_CONTROL_BODY {
         return Err(EngineError::Other("EncodeCraft job is too large to send".into()));
     }
 
-    match post_json(&url, &body, CONNECT_TIMEOUT, HTTP_TIMEOUT) {
-        Ok((status, resp)) if (200..300).contains(&status) => {
-            s.toast(format!("Queued “{name}” in EncodeCraft"));
-            Ok(queued_json(&job, "http", Some(status), Some(resp), None))
+    let running = encoder_is_up(&health);
+    if running {
+        let Some(tok) = token.as_deref() else {
+            return Err(EngineError::Other(SETUP_TOKEN.into()));
+        };
+        return match post_json(&url, &body, Some(tok), CONNECT_TIMEOUT, HTTP_TIMEOUT) {
+            Ok((401, _)) => Err(EngineError::Other(SETUP_TOKEN.into())),
+            Ok((status, resp)) if (200..300).contains(&status) => {
+                s.toast(format!("Queued “{name}” in EncodeCraft"));
+                Ok(queued_json(&job, "http", Some(status), Some(resp), None))
+            }
+            Ok((status, resp)) => Err(EngineError::Other(format!("EncodeCraft refused the job (HTTP {status}): {}", truncate(&resp, 240)))),
+            Err(http_err) => queue_via_inbox(s, &job, &body, &url, inbox.as_deref(), launch, &name, Some(http_err.as_str())),
+        };
+    }
+    queue_via_inbox(s, &job, &body, &url, inbox.as_deref(), launch, &name, None)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::too_many_arguments)]
+fn queue_via_inbox(s: &mut Session, job: &Job, body: &str, url: &str, inbox: Option<&Path>, launch: bool, name: &str, http_err: Option<&str>) -> Result<Value> {
+    let inbox_path = match inbox {
+        Some(dir) => write_inbox(dir, job.id.as_deref().unwrap_or("job"), body)?,
+        None => {
+            let why = http_err.unwrap_or("EncodeCraft is not running");
+            return Err(EngineError::Other(format!(
+                "{SETUP_TOKEN}. {why} at {url}, and no inbox folder was found. Install EncodeCraft, or set ENCODECRAFT_HOME / ENCODECRAFT_INBOX."
+            )));
         }
-        Ok((status, resp)) => Err(EngineError::Other(format!("EncodeCraft refused the job (HTTP {status}): {}", truncate(&resp, 240)))),
-        Err(http_err) => {
-            let inbox_path = match inbox.as_deref() {
-                Some(dir) => write_inbox(dir, job.id.as_deref().unwrap_or("job"), &body)?,
-                None => {
-                    return Err(EngineError::Other(format!(
-                        "EncodeCraft is not running at {url} ({http_err}), and no inbox folder was found. Install EncodeCraft, or set ENCODECRAFT_INBOX."
-                    )));
-                }
-            };
-            let mut launched = false;
-            if launch {
-                launched = launch_encodecraft();
-                if launched {
-                    for _ in 0..LAUNCH_RETRIES {
-                        std::thread::sleep(LAUNCH_RETRY_WAIT);
-                        if let Ok((status, resp)) = post_json(&url, &body, CONNECT_TIMEOUT, HTTP_TIMEOUT)
-                            && (200..300).contains(&status)
-                        {
+    };
+    let mut launched = false;
+    if launch {
+        launched = launch_encodecraft();
+        if launched {
+            for _ in 0..LAUNCH_RETRIES {
+                std::thread::sleep(LAUNCH_RETRY_WAIT);
+                let tok = discover_ipc_token();
+                let health = health_url_for(url).unwrap_or_else(|_| String::new());
+                if !health.is_empty() && encoder_is_up(&health) {
+                    let Some(tok) = tok.as_deref() else {
+                        return Err(EngineError::Other(SETUP_TOKEN.into()));
+                    };
+                    match post_json(url, body, Some(tok), CONNECT_TIMEOUT, HTTP_TIMEOUT) {
+                        Ok((401, _)) => return Err(EngineError::Other(SETUP_TOKEN.into())),
+                        Ok((status, resp)) if (200..300).contains(&status) => {
                             s.toast(format!("Queued “{name}” in EncodeCraft"));
-                            return Ok(queued_json(&job, "http-after-launch", Some(status), Some(resp), Some(inbox_path.to_string_lossy().into_owned())));
+                            return Ok(queued_json(job, "http-after-launch", Some(status), Some(resp), Some(inbox_path.to_string_lossy().into_owned())));
                         }
+                        _ => {}
                     }
                 }
             }
-            let how = if launched {
-                format!("EncodeCraft was opened; the job is in the inbox ({})", inbox_path.display())
-            } else {
-                format!("the job was saved to the inbox ({}). Open EncodeCraft to pick it up — it was not running at {url} ({http_err})", inbox_path.display())
-            };
-            s.toast(how);
-            Ok(queued_json(&job, "inbox", None, None, Some(inbox_path.to_string_lossy().into_owned())))
         }
     }
+    let how = if launched {
+        format!("EncodeCraft was opened; the job is in the inbox ({})", inbox_path.display())
+    } else if let Some(err) = http_err {
+        format!("the job was saved to the inbox ({}). Open EncodeCraft to pick it up — it was not reachable at {url} ({err})", inbox_path.display())
+    } else {
+        format!("the job was saved to the inbox ({}). {SETUP_TOKEN} (it was not running at {url})", inbox_path.display())
+    };
+    s.toast(how);
+    Ok(queued_json(job, "inbox", None, None, Some(inbox_path.to_string_lossy().into_owned())))
 }
 
 fn queued_json(job: &Job, via: &str, status: Option<u16>, response: Option<String>, inbox: Option<String>) -> Value {
@@ -167,39 +200,14 @@ fn has_ctrl(s: &str) -> bool {
 }
 
 /// EncodeCraft's drop folder. `ENCODECRAFT_INBOX` wins when it is a valid absolute path;
-/// a set-but-invalid value is ignored (no silent fallback to a different folder).
+/// otherwise `<data dir>/inbox/` from [`encodecraft_job::inbox_dir`].
 pub fn inbox_dir() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("ENCODECRAFT_INBOX")
         && !p.is_empty()
     {
         return validate_inbox_dir(Path::new(&p)).ok();
     }
-    #[cfg(target_os = "windows")]
-    {
-        return std::env::var_os("APPDATA")
-            .filter(|a| !a.is_empty())
-            .map(|a| PathBuf::from(a).join("EncodeCraft").join("inbox"))
-            .and_then(|p| validate_inbox_dir(&p).ok());
-    }
-    #[cfg(target_os = "macos")]
-    {
-        return dirs_home().map(|h| h.join("Library/Application Support/EncodeCraft/inbox")).and_then(|p| validate_inbox_dir(&p).ok());
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    {
-        if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
-            let p = PathBuf::from(xdg);
-            if !p.as_os_str().is_empty() {
-                return validate_inbox_dir(&p.join("encodecraft/inbox")).ok();
-            }
-        }
-        dirs_home().map(|h| h.join(".local/share/encodecraft/inbox")).and_then(|p| validate_inbox_dir(&p).ok())
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-fn dirs_home() -> Option<PathBuf> {
-    std::env::var_os("HOME").filter(|h| !h.is_empty()).map(PathBuf::from)
+    encodecraft_job::inbox_dir().and_then(|p| validate_inbox_dir(&p).ok())
 }
 
 fn validate_inbox_dir(dir: &Path) -> std::result::Result<PathBuf, String> {
@@ -288,21 +296,59 @@ fn open_inbox_new(path: &Path) -> std::io::Result<std::fs::File> {
     opts.open(path)
 }
 
-/// Loopback-only HTTP/1.1 POST. Never performs DNS. Rejects CR/LF so the request line cannot be smuggled.
-/// `connect` is time-bounded so a dropped SYN cannot freeze the UI.
+fn health_url_for(enqueue: &str) -> std::result::Result<String, String> {
+    let (_, port, _) = parse_loopback_http_url(enqueue)?;
+    Ok(format!("http://127.0.0.1:{port}/health"))
+}
+
 #[cfg(not(target_arch = "wasm32"))]
-fn post_json(url: &str, body: &str, connect: Duration, rw: Duration) -> std::result::Result<(u16, String), String> {
+fn encoder_is_up(health_url: &str) -> bool {
+    matches!(http_exchange("GET", health_url, None, None, CONNECT_TIMEOUT, HTTP_TIMEOUT), Ok((status, body)) if (200..300).contains(&status) && is_health_ok(&body))
+}
+
+/// Loopback-only HTTP/1.1 POST. Never performs DNS. Rejects CR/LF so the request line cannot be smuggled.
+/// `connect` is time-bounded so a dropped SYN cannot freeze the UI. No Origin / Sec-Fetch-Site.
+#[cfg(not(target_arch = "wasm32"))]
+fn post_json(url: &str, body: &str, token: Option<&str>, connect: Duration, rw: Duration) -> std::result::Result<(u16, String), String> {
+    http_exchange("POST", url, Some(body), token, connect, rw)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn http_exchange(
+    method: &str,
+    url: &str,
+    body: Option<&str>,
+    token: Option<&str>,
+    connect: Duration,
+    rw: Duration,
+) -> std::result::Result<(u16, String), String> {
     use std::io::{Read, Write};
     use std::net::{Ipv4Addr, SocketAddr, TcpStream};
+    if !matches!(method, "GET" | "POST") {
+        return Err("unsupported HTTP method".into());
+    }
     let (host, port, path) = parse_loopback_http_url(url)?;
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let mut stream = TcpStream::connect_timeout(&addr, connect).map_err(|e| e.to_string())?;
     stream.set_read_timeout(Some(rw)).map_err(|e| e.to_string())?;
     stream.set_write_timeout(Some(rw)).map_err(|e| e.to_string())?;
-    let req = format!(
-        "POST {path} HTTP/1.1\r\nHost: {host}:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    );
+    let mut req = format!("{method} {path} HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n");
+    if let Some(tok) = token {
+        let tok = sanitize_token(tok).ok_or_else(|| SETUP_TOKEN.to_string())?;
+        req.push_str(TOKEN_HEADER);
+        req.push_str(": ");
+        req.push_str(&tok);
+        req.push_str("\r\n");
+    }
+    if let Some(body) = body {
+        req.push_str("Content-Type: application/json\r\n");
+        req.push_str("Content-Length: ");
+        req.push_str(&body.len().to_string());
+        req.push_str("\r\n\r\n");
+        req.push_str(body);
+    } else {
+        req.push_str("\r\n");
+    }
     stream.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
     let _ = stream.flush();
     let mut buf = Vec::new();
@@ -513,7 +559,7 @@ pub fn specs() -> Vec<CommandSpec> {
         label: "Add to EncodeCraft Queue",
         menu: &["Composition"],
         shortcut: Some("Cmd+Alt+M"),
-        params: "{comp?: id|name, output?: path, format?: h264|hevc|av1|prores|webm|png|jpeg|tiff|exr|gif, url?: http://127.0.0.1:port/v1/enqueue, inbox?: absolute folder, launch?: bool (default true; open EncodeCraft when the HTTP server is down)}",
+        params: "{comp?: id|name, output?: path, format?: h264|hevc|av1|prores|webm|png|jpeg|tiff|exr|gif, url?: http://127.0.0.1:port/v1/enqueue, inbox?: absolute folder, launch?: bool (default true; open EncodeCraft when the HTTP server is down), token?: IPC token (default: ENCODECRAFT_TOKEN or <data dir>/ipc-token)}",
         enabled: has_comp,
         run: queue,
         journal: false,
@@ -560,28 +606,114 @@ mod tests {
     struct Server {
         url: String,
         hits: Arc<Mutex<Vec<String>>>,
-        status: u16,
+        enqueue_status: u16,
         _join: thread::JoinHandle<()>,
     }
 
-    fn serve(status: u16) -> Server {
+    /// Mock EncodeCraft: GET /health is open; POST /v1/enqueue requires the token header,
+    /// a loopback Host, and rejects non-loopback Origin / cross-site fetch.
+    fn serve_encodecraft(expect_token: &'static str, enqueue_status: u16) -> Server {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
         let port = listener.local_addr().unwrap().port();
         let hits = Arc::new(Mutex::new(Vec::new()));
         let h = hits.clone();
         let join = thread::spawn(move || {
-            if let Ok((mut s, _)) = listener.accept() {
-                let _ = s.set_read_timeout(Some(std::time::Duration::from_millis(500)));
-                let mut buf = vec![0u8; 8192];
-                let n = s.read(&mut buf).unwrap_or(0);
-                h.lock().unwrap_or_else(|e| e.into_inner()).push(String::from_utf8_lossy(&buf[..n]).into_owned());
-                let body = r#"{"id":"q1","status":"queued"}"#;
-                let resp =
-                    format!("HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
-                let _ = s.write_all(resp.as_bytes());
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
+            while std::time::Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut s, _)) => {
+                        let _ = s.set_nonblocking(false);
+                        let _ = s.set_read_timeout(Some(std::time::Duration::from_millis(400)));
+                        let mut buf = vec![0u8; 16384];
+                        let n = s.read(&mut buf).unwrap_or(0);
+                        let req = String::from_utf8_lossy(&buf[..n]).into_owned();
+                        h.lock().unwrap_or_else(|e| e.into_inner()).push(req.clone());
+                        let resp = mock_encodecraft_response(&req, expect_token, enqueue_status);
+                        let _ = s.write_all(resp.as_bytes());
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    Err(_) => break,
+                }
             }
         });
-        Server { url: format!("http://127.0.0.1:{port}/v1/enqueue"), hits, status, _join: join }
+        Server { url: format!("http://127.0.0.1:{port}/v1/enqueue"), hits, enqueue_status, _join: join }
+    }
+
+    fn header_value(req: &str, name: &str) -> Option<String> {
+        let want = name.to_ascii_lowercase();
+        for line in req.lines().skip(1) {
+            if line.is_empty() || line == "\r" {
+                break;
+            }
+            let (k, v) = line.split_once(':')?;
+            if k.trim().eq_ignore_ascii_case(&want) {
+                return Some(v.trim().to_string());
+            }
+        }
+        None
+    }
+
+    fn host_is_loopback(host: &str) -> bool {
+        let h = host.trim().trim_matches(|c| c == '[' || c == ']');
+        let h = h.rsplit_once(':').map(|(n, p)| if p.chars().all(|c| c.is_ascii_digit()) { n } else { h }).unwrap_or(h);
+        h == "127.0.0.1" || h.eq_ignore_ascii_case("localhost")
+    }
+
+    fn origin_is_forbidden(origin: &str) -> bool {
+        let o = origin.trim();
+        if o.eq_ignore_ascii_case("null") || o.is_empty() {
+            return true;
+        }
+        let rest = o.strip_prefix("http://").or_else(|| o.strip_prefix("https://")).unwrap_or(o);
+        let host = rest.split('/').next().unwrap_or(rest);
+        !host_is_loopback(host)
+    }
+
+    fn mock_encodecraft_response(req: &str, expect_token: &str, enqueue_status: u16) -> String {
+        let first = req.lines().next().unwrap_or("");
+        let path = first.split_whitespace().nth(1).unwrap_or("");
+        let host = header_value(req, "Host").unwrap_or_default();
+        if !host_is_loopback(&host) {
+            return http_json(403, r#"{"error":"host"}"#);
+        }
+        if let Some(origin) = header_value(req, "Origin")
+            && origin_is_forbidden(&origin)
+        {
+            return http_json(403, r#"{"error":"origin"}"#);
+        }
+        if header_value(req, "Sec-Fetch-Site").is_some_and(|v| v.eq_ignore_ascii_case("cross-site")) {
+            return http_json(403, r#"{"error":"site"}"#);
+        }
+        if path == "/health" || path.starts_with("/health?") {
+            return http_json(200, r#"{"ok":true,"product":"EncodeCraft"}"#);
+        }
+        let tok = header_value(req, "X-EncodeCraft-Token");
+        if tok.as_deref() != Some(expect_token) {
+            return http_json(401, r#"{"error":"unauthorized"}"#);
+        }
+        if first.starts_with("POST /v1/enqueue") {
+            let body = if (200..300).contains(&enqueue_status) { r#"{"id":"q1","status":"queued"}"# } else { r#"{"error":"refused"}"# };
+            return http_json(enqueue_status, body);
+        }
+        http_json(404, r#"{"error":"not found"}"#)
+    }
+
+    fn http_json(status: u16, body: &str) -> String {
+        let reason = match status {
+            200 => "OK",
+            401 => "Unauthorized",
+            403 => "Forbidden",
+            404 => "Not Found",
+            _ => "Error",
+        };
+        format!("HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
+    }
+
+    fn serve(status: u16) -> Server {
+        serve_encodecraft("test-token", status)
     }
 
     #[test]
@@ -606,16 +738,21 @@ mod tests {
         let t = tmp();
         let mut s = session_saved(&t.0);
         let srv = serve(200);
-        let r = s.execute("encodecraft.queue", json!({"url": srv.url, "launch": false})).unwrap();
+        let r = s.execute("encodecraft.queue", json!({"url": srv.url, "launch": false, "token": "test-token"})).unwrap();
         assert_eq!(r["via"], "http");
         assert_eq!(r["queued"], true);
         let name = s.project.item(s.active_comp_id().unwrap()).unwrap().name.clone();
         assert_eq!(r["composition"], name);
         let req = srv.hits.lock().unwrap().join("\n");
+        assert!(req.contains("GET /health"), "{req}");
         assert!(req.contains("POST /v1/enqueue"), "{req}");
+        assert!(req.contains("X-EncodeCraft-Token: test-token"), "{req}");
+        assert!(!req.to_ascii_lowercase().contains("\r\norigin:"), "must not send Origin\n{req}");
+        assert!(!req.to_ascii_lowercase().contains("sec-fetch-site"), "{req}");
         assert!(req.contains(&name), "{req}");
         assert!(req.contains("encodecraft.job/v1"), "{req}");
-        assert_eq!(srv.status, 200);
+        assert!(!req.contains("outputDir"), "{req}");
+        assert_eq!(srv.enqueue_status, 200);
         assert!(s.drain_events().iter().any(|e| matches!(e, crate::Event::Toast { error: false, .. })));
     }
 
@@ -624,8 +761,29 @@ mod tests {
         let t = tmp();
         let mut s = session_saved(&t.0);
         let srv = serve(503);
-        let e = s.execute("encodecraft.queue", json!({"url": srv.url, "launch": false})).unwrap_err().to_string();
+        let e = s.execute("encodecraft.queue", json!({"url": srv.url, "launch": false, "token": "test-token"})).unwrap_err().to_string();
         assert!(e.contains("503") || e.contains("refused"), "{e}");
+    }
+
+    #[test]
+    fn http_401_asks_to_open_encodecraft() {
+        let t = tmp();
+        let mut s = session_saved(&t.0);
+        let srv = serve_encodecraft("real-token", 200);
+        let e = s.execute("encodecraft.queue", json!({"url": srv.url, "launch": false, "token": "wrong-token"})).unwrap_err().to_string();
+        assert!(e.contains("Open EncodeCraft once"), "{e}");
+    }
+
+    #[test]
+    fn running_encoder_without_token_is_a_clear_error() {
+        let t = tmp();
+        let mut s = session_saved(&t.0);
+        let srv = serve(200);
+        let e = s.execute("encodecraft.queue", json!({"url": srv.url, "launch": false})).unwrap_err().to_string();
+        assert!(e.contains("Open EncodeCraft once"), "{e}");
+        let hits = srv.hits.lock().unwrap().join("\n");
+        assert!(hits.contains("GET /health"), "{hits}");
+        assert!(!hits.contains("POST /v1/enqueue"), "must not POST without a token\n{hits}");
     }
 
     #[test]
@@ -649,6 +807,7 @@ mod tests {
         let job: encodecraft_job::Job = serde_json::from_str(&text).unwrap();
         assert_eq!(job.composition, r["composition"]);
         assert!(job.project.contains("demo.ecproj"));
+        assert!(job.output_dir.is_none());
         assert!(path.starts_with(&*inbox.to_string_lossy()));
     }
 

@@ -159,13 +159,17 @@ build real projects through these interfaces; they are worked examples of everyt
   importing it (`file.import`, `file.newCompFromSelection`) and `render_frame {transparent: true}`
   for its alpha (ProRes 4444 and WebM VP9 alpha both read back as straight alpha).
 * **EncodeCraft** (Media Encoder-style queue, this fork): save the project, then
-  `encodecraft.queue {comp?}`. EffectCraft POSTs the saved path and composition name to
-  `http://127.0.0.1:9878/v1/enqueue` (loopback IPv4 only, never DNS; HTTPS/IPv6/`..`/CRLF
-  rejected). If EncodeCraft is not running it writes the same JSON to EncodeCraft's inbox
-  (`ENCODECRAFT_INBOX` or the platform config dir; absolute, no `..`) and tries to open the
+  `encodecraft.queue {comp?}`. EffectCraft probes `GET /health` (unauthenticated;
+  `{"ok":true,"product":"EncodeCraft"}`) then POSTs the saved path and composition name to
+  `http://127.0.0.1:9878/v1/enqueue` with `X-EncodeCraft-Token` (loopback IPv4 only, never DNS;
+  HTTPS/IPv6/`..`/CRLF rejected; no `Origin` / `Sec-Fetch-Site`). The token is
+  `ENCODECRAFT_TOKEN` or `<data dir>/ipc-token` (`ENCODECRAFT_HOME`, else the platform
+  EncodeCraft data dir). Missing token or HTTP 401: "Open EncodeCraft once so it can set up
+  the connection". If EncodeCraft is not running it writes the same JSON to
+  `<data dir>/inbox/` (`ENCODECRAFT_INBOX` override; absolute, no `..`) and tries to open the
   app from an absolute existing path (same folder as `effectcraft`, a well-known install
-  location, or `ENCODECRAFT_BIN` — never `PATH`). Unsaved or dirty projects fail with a
-  save-first error. EncodeCraft renders through `effectcraft-cli`.
+  location, or `ENCODECRAFT_BIN` — never `PATH`). Leave `outputDir` unset. Unsaved or dirty
+  projects fail with a save-first error. EncodeCraft renders through `effectcraft-cli`.
 * **Screen Suite** (this fork, **not ported yet**): Kuwait DOOH booking → comps → EncodeCraft →
   size QC. Read [screen-suite-analysis.md](screen-suite-analysis.md) for per-tool behaviour,
   architecture mapping, and UX options. Do not implement until a UX direction is chosen.
