@@ -21,7 +21,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 
 use effectcraft_effects::Buf;
-use effectcraft_project::{ItemKind, Layer, LayerSource, Node, PropGroup};
+use effectcraft_project::{FootageKind, ItemKind, Layer, LayerSource, Node, PropGroup};
 
 use crate::eval::EvalCtx;
 
@@ -473,6 +473,63 @@ fn hash_values(h: &mut KeyHasher, ctx: &EvalCtx, layer: &Layer, g: &PropGroup) {
             Node::Group(sub) => hash_values(h, ctx, layer, sub),
         }
     }
+}
+
+/// Whether this layer's composited pixels are the same at every time (a still solid, a still,
+/// static text/shapes, no keyframes or expressions, no time-based effects). Transform-only
+/// animation still changes the composite, so it is not static.
+pub fn layer_is_static(ctx: &EvalCtx, layer: &Layer) -> bool {
+    if layer.switches.adjustment || layer.is_3d() || time_dependent(layer) || group_animated(&layer.props) {
+        return false;
+    }
+    match &layer.source {
+        LayerSource::Solid { .. } | LayerSource::Text | LayerSource::Shape => true,
+        LayerSource::Footage { item } => {
+            ctx.project.item(*item).is_some_and(|it| matches!(&it.kind, ItemKind::Footage(f) if f.kind == FootageKind::Still && f.has_video))
+        }
+        _ => false,
+    }
+}
+
+fn group_animated(g: &PropGroup) -> bool {
+    g.children.iter().any(|c| match c {
+        Node::Prop(p) => !p.keys.is_empty() || p.has_expression(),
+        Node::Group(sub) => group_animated(sub),
+    })
+}
+
+/// Content key for a cached composite of consecutive static layers (a "plate"): canvas size,
+/// each layer's processed pixels, its transform into the comp, blend mode and opacity.
+pub fn plate_key(ctx: &EvalCtx, layers: &[&Layer], scale: f64, width: u32, height: u32, draft: bool) -> Option<u64> {
+    if layers.is_empty() {
+        return None;
+    }
+    let mut h = KeyHasher(0x504c_4154_4520_4b59);
+    width.hash(&mut h);
+    height.hash(&mut h);
+    scale.to_bits().hash(&mut h);
+    draft.hash(&mut h);
+    crate::color::Pipe::of(&ctx.project.settings).key().hash(&mut h);
+    for layer in layers {
+        match &layer.source {
+            LayerSource::Footage { item } => {
+                item.hash(&mut h);
+                if let Some(it) = ctx.project.item(*item) {
+                    hash_debug(&mut h, it);
+                }
+            }
+            _ => {
+                let k = layer_key(ctx, layer, scale, draft, false)?;
+                k.hash(&mut h);
+                styles_key(ctx, layer, k).hash(&mut h);
+            }
+        }
+        hash_debug(&mut h, &layer.blend_mode);
+        ctx.opacity(layer).to_bits().hash(&mut h);
+        let (m, _) = ctx.layer_to_comp(layer);
+        hash_debug(&mut h, &m);
+    }
+    Some(h.finish())
 }
 
 /// Cache key for the processed (source → masks → effects) buffer of `layer` at the context

@@ -698,3 +698,26 @@ fn within_memory_returns_the_work_when_there_is_room() {
     let img = g.within_memory(|| g.ctx.image(64, 32)).expect("room for a 64×32 texture");
     assert_eq!((img.width, img.height), (64, 32));
 }
+
+/// A DOOH-shaped 2D stack (video-like footage, a still, a solid, blend modes, Gaussian Blur)
+/// matches the CPU reference. Skips without an adapter.
+#[test]
+fn dooh_like_stack_matches_cpu() {
+    for depth in [BitDepth::Bpc8, BitDepth::Bpc32] {
+        let mut s = Scene::new(depth);
+        s.p.settings.gpu_acceleration = true;
+        let plate = s.footage(97, 61);
+        s.push(plate);
+        let mut graphic = s.footage(40, 28);
+        graphic.blend_mode = BlendMode::Screen;
+        set(&mut graphic, "transform/position", v3(28.0, 22.0));
+        s.effect(&mut graphic, "ec.blur.gaussian", &[("blurriness", Value::Scalar(3.0))]);
+        s.push(graphic);
+        let mut bar = s.solid([0.1, 0.15, 0.25], 80, 14);
+        bar.blend_mode = BlendMode::Multiply;
+        set(&mut bar, "transform/position", v3(48.0, 50.0));
+        s.push(bar);
+        check(&format!("dooh-like {depth:?}"), compare_at(&s, opts(), Tick::ZERO), 0.0);
+        check(&format!("dooh-like {depth:?} half"), compare_at(&s, RenderOpts { scale: 0.5, ..opts() }, Tick::ZERO), 0.0);
+    }
+}

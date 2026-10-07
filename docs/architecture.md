@@ -128,7 +128,15 @@ collapsed 3D precomps (drawn flattened), morph targets, extruded strokes.
 A **layer cache** keeps each layer's finished pixels (source, masks and effects) keyed by a hash of
 its evaluated inputs, excluding the transform. Static and transform-only layers render once;
 editing one layer re-renders only that layer. Effects that read the clock directly are declared in
-`effects::TIME_DEPENDENT`, and a test checks every registered effect against that list.
+`effects::TIME_DEPENDENT`, and a test checks every registered effect against that list. Independent
+2D layers (not adjustment layers, not 3D, not collapsed precomps) bake those buffers **in
+parallel**, then blend in order; a run of consecutive static layers at the bottom of the stack is
+kept as a **plate** so a still background is not re-composited every frame. `RenderOpts::parallel`
+turns the parallel walk off (the serial walk is the pixel oracle). Movie decode reads several
+frames ahead (`MediaPool` prefetch depth, default 8) and may cache Half/Quarter preview pixels
+already downsampled. Video decode itself is FilmCraft's pure-Rust software path; hardware video
+decode is not wired. Compositing and common effects run on the GPU when Mercury GPU Acceleration
+is on and wgpu finds an adapter (Direct3D 12 on Windows), with automatic CPU fallback.
 
 The viewer's **RAM preview** (`ui-egui/src/frames.rs`) keeps finished frames keyed by project
 revision, comp, frame, scale, 3D view / region of interest and a hash of the other render

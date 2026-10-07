@@ -16,12 +16,17 @@ use crate::{MediaError, Result};
 /// Default frame-cache budget: 1 GiB of decoded frames.
 pub const DEFAULT_BUDGET: usize = 1 << 30;
 
+/// Movie frames decoded ahead of sequential playback (native builds).
+pub const DEFAULT_PREFETCH_DEPTH: usize = 8;
+
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct Key {
     path: Arc<str>,
     frame: i64,
     alpha: u8,
     matte: [u32; 3],
+    /// Preview scale × 1000 (1000 = native). Movie frames may be cached already downsampled.
+    scale_q: u16,
 }
 
 struct Entry {
@@ -125,6 +130,8 @@ struct CacheState {
     inflight: HashSet<Key>,
     /// Last frame index requested per movie (sequential-playback detection).
     last: HashMap<Arc<str>, i64>,
+    /// Paths with a read-ahead thread already running.
+    prefetching: HashSet<Arc<str>>,
 }
 
 struct Inner {
@@ -138,6 +145,7 @@ struct Inner {
     done: Condvar,
     budget: AtomicU64,
     read_ahead: AtomicBool,
+    prefetch_depth: AtomicU64,
     hits: AtomicU64,
     misses: AtomicU64,
     prefetched: AtomicU64,
@@ -155,8 +163,8 @@ struct Inner {
 /// - One decoder per movie: FilmCraft's GOP cache keeps it positioned, so sequential frames
 ///   decode without re-seeking, and a seek decodes forward from the preceding sync sample.
 /// - Converted frames live in an LRU cache bounded by a byte budget ([`DEFAULT_BUDGET`]).
-/// - Sequential playback reads one frame ahead on a worker thread (native builds), so decoding
-///   and conversion of the next frame overlap with the caller's use of the current one.
+/// - Sequential playback decodes several frames ahead on a worker thread (native builds; default
+///   [`DEFAULT_PREFETCH_DEPTH`]), so decoding overlaps with compositing of the current frame.
 /// - Concurrent requests for the same frame decode it once.
 #[derive(Clone)]
 pub struct MediaPool {
@@ -206,6 +214,7 @@ impl MediaPool {
                 done: Condvar::new(),
                 budget: AtomicU64::new(bytes as u64),
                 read_ahead: AtomicBool::new(cfg!(not(target_arch = "wasm32"))),
+                prefetch_depth: AtomicU64::new(DEFAULT_PREFETCH_DEPTH as u64),
                 hits: AtomicU64::new(0),
                 misses: AtomicU64::new(0),
                 prefetched: AtomicU64::new(0),
@@ -225,10 +234,21 @@ impl MediaPool {
         lock(&self.inner.cache).lru.evict(bytes);
     }
 
-    /// Enable or disable reading one frame ahead during sequential playback (on by default on
+    /// Enable or disable reading frames ahead during sequential playback (on by default on
     /// native builds; ignored on wasm32).
     pub fn set_read_ahead(&self, on: bool) {
         self.inner.read_ahead.store(on && cfg!(not(target_arch = "wasm32")), Ordering::Relaxed);
+    }
+
+    /// How many movie frames to decode ahead of the playhead (1–32; default
+    /// [`DEFAULT_PREFETCH_DEPTH`]).
+    pub fn prefetch_depth(&self) -> usize {
+        self.inner.prefetch_depth.load(Ordering::Relaxed) as usize
+    }
+
+    /// Change the sequential read-ahead depth (0 or 1 restores a single frame; wasm32 ignores it).
+    pub fn set_prefetch_depth(&self, frames: usize) {
+        self.inner.prefetch_depth.store(frames.min(32) as u64, Ordering::Relaxed);
     }
 
     pub fn stats(&self) -> PoolStats {
@@ -276,7 +296,27 @@ impl MediaPool {
 
     /// Decode (or fetch from cache) the frame of `footage` at source time `t`.
     pub fn frame_at(&self, footage: &Footage, t: Tick) -> Result<Arc<Image>> {
-        Inner::frame_at(&self.inner, footage, t, true)
+        Inner::frame_at(&self.inner, footage, t, true, 1.0)
+    }
+
+    /// Decode (or fetch from cache) the frame of `footage` at source time `t`, already sized
+    /// for a preview scale (1 = native). Movie frames may be cached downsampled so Half/Quarter
+    /// RAM preview does not keep full-resolution pixels.
+    pub fn frame_at_scaled(&self, footage: &Footage, t: Tick, scale: f64) -> Result<Arc<Image>> {
+        Inner::frame_at(&self.inner, footage, t, true, scale)
+    }
+
+    /// Preview scale as an integer thousandths bucket (Full/Half/Third/Quarter).
+    pub fn scale_quantum(scale: f64) -> u16 {
+        if scale >= 0.9 {
+            1000
+        } else if scale >= 0.66 {
+            500
+        } else if scale >= 0.4 {
+            333
+        } else {
+            250
+        }
     }
 
     /// Settings ▸ Disk ▸ Conformed Audio Folder: write each footage file's decoded audio there
@@ -409,7 +449,7 @@ impl MediaPool {
 
     /// A thumbnail of `footage` (its first frame) fitting in `max_side` × `max_side`, aspect kept.
     pub fn thumbnail(&self, footage: &Footage, max_side: u32) -> Result<Image> {
-        let img = Inner::frame_at(&self.inner, footage, Tick::ZERO, false)?;
+        let img = Inner::frame_at(&self.inner, footage, Tick::ZERO, false, 1.0)?;
         let (w, h) = (img.width.max(1), img.height.max(1));
         let s = (max_side.max(1) as f64 / w.max(h) as f64).min(1.0);
         if s >= 1.0 {
@@ -496,7 +536,7 @@ impl Inner {
             AlphaMode::Ignore => 2,
         };
         let matte = if footage.alpha == AlphaMode::Premultiplied { footage.premul_color.map(f32::to_bits) } else { [0; 3] };
-        let key = |path: &str, frame| Key { path: path.into(), frame, alpha, matte };
+        let key = |path: &str, frame| Key { path: path.into(), frame, alpha, matte, scale_q: 1000 };
         match footage.kind {
             FootageKind::Sequence if !footage.sequence.is_empty() => {
                 let i = Self::frame_index(footage.frame_rate, t, footage.sequence.len() as i64, footage.loop_count);
@@ -522,21 +562,24 @@ impl Inner {
         }
     }
 
-    fn frame_at(self: &Arc<Self>, footage: &Footage, t: Tick, playback: bool) -> Result<Arc<Image>> {
+    fn frame_at(self: &Arc<Self>, footage: &Footage, t: Tick, playback: bool, scale: f64) -> Result<Arc<Image>> {
         if !footage.has_video {
             return Err(MediaError::Unsupported(format!("{}: no video", footage.path)));
         }
-        let loc = Self::locate(footage, t);
-        let movie = loc.media_t.is_some();
+        let mut loc = Self::locate(footage, t);
+        let movie = loc.media_t.is_some() || footage.kind == FootageKind::Sequence;
+        let scale_q = if movie { MediaPool::scale_quantum(scale) } else { 1000 };
+        loc.key.scale_q = scale_q;
         let mut c = lock(&self.cache);
-        // sequential playback of a movie: read the next frame ahead
+        // sequential playback of a movie: decode several frames ahead on one worker
         if playback && movie {
             let prev = c.last.insert(loc.key.path.clone(), loc.key.frame);
-            if prev == Some(loc.key.frame - 1) && self.read_ahead.load(Ordering::Relaxed) {
-                let next_t = t + footage.frame_rate.frame_duration();
-                let next = Self::locate(footage, next_t);
-                if next.key != loc.key && !c.lru.map.contains_key(&next.key) && !c.inflight.contains(&next.key) {
-                    self.prefetch(footage, next_t);
+            let depth = self.prefetch_depth.load(Ordering::Relaxed) as usize;
+            if prev == Some(loc.key.frame - 1) && self.read_ahead.load(Ordering::Relaxed) && depth > 0 && !c.prefetching.contains(&loc.key.path) {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    c.prefetching.insert(loc.key.path.clone());
+                    self.prefetch_run(footage, t, depth, scale);
                 }
             }
         }
@@ -555,7 +598,7 @@ impl Inner {
             if rayon::current_thread_index().is_some() {
                 self.misses.fetch_add(1, Ordering::Relaxed);
                 drop(c);
-                return Ok(Arc::new(self.decode(&loc, footage)?));
+                return Ok(Arc::new(self.decode_scaled(&loc, footage, scale_q)?));
             }
             c = self.done.wait(c).unwrap_or_else(|e| e.into_inner());
         }
@@ -563,23 +606,42 @@ impl Inner {
         c.inflight.insert(loc.key.clone());
         drop(c);
         let _guard = Inflight { inner: self, key: loc.key.clone() };
-        let img = Arc::new(self.decode(&loc, footage)?);
+        let img = Arc::new(self.decode_scaled(&loc, footage, scale_q)?);
         lock(&self.cache).lru.insert(loc.key, img.clone(), self.budget());
         Ok(img)
     }
 
+    fn decode_scaled(&self, loc: &Loc, footage: &Footage, scale_q: u16) -> Result<Image> {
+        let img = self.decode(loc, footage)?;
+        if scale_q >= 1000 || img.width == 0 || img.height == 0 {
+            return Ok(img);
+        }
+        let rw = ((u64::from(img.width) * u64::from(scale_q) + 500) / 1000).max(1) as u32;
+        let rh = ((u64::from(img.height) * u64::from(scale_q) + 500) / 1000).max(1) as u32;
+        if rw == img.width && rh == img.height { Ok(img) } else { Ok(effectcraft_raster::resample(&img, rw, rh)) }
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
-    fn prefetch(self: &Arc<Self>, footage: &Footage, t: Tick) {
-        let (me, f) = (self.clone(), footage.clone());
+    fn prefetch_run(self: &Arc<Self>, footage: &Footage, t: Tick, depth: usize, scale: f64) {
+        let (me, f, path) = (self.clone(), footage.clone(), {
+            let loc = Self::locate(footage, t);
+            loc.key.path
+        });
         self.prefetched.fetch_add(1, Ordering::Relaxed);
         // A plain thread, not a rayon job: the decode below parallelises with rayon itself.
         std::thread::spawn(move || {
-            let _ = me.frame_at(&f, t, false);
+            let step = f.frame_rate.frame_duration();
+            for i in 1..=depth {
+                let Some(dt) = step.0.checked_mul(i as i64) else { break };
+                let next_t = Tick(t.0.saturating_add(dt));
+                let _ = me.frame_at(&f, next_t, false, scale);
+            }
+            lock(&me.cache).prefetching.remove(&path);
         });
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn prefetch(self: &Arc<Self>, _footage: &Footage, _t: Tick) {}
+    fn prefetch_run(self: &Arc<Self>, _footage: &Footage, _t: Tick, _depth: usize, _scale: f64) {}
 
     fn decode(&self, loc: &Loc, footage: &Footage) -> Result<Image> {
         let op = AlphaOp::new(footage.alpha, footage.premul_color);
@@ -623,16 +685,28 @@ impl FootageSource for MediaPool {
         Some(self.budget())
     }
     fn frame(&self, _item: ItemId, footage: &Footage, t: Tick) -> Option<Arc<Image>> {
+        self.frame_scaled(_item, footage, t, 1.0)
+    }
+
+    fn frame_scaled(&self, _item: ItemId, footage: &Footage, t: Tick, scale: f64) -> Option<Arc<Image>> {
         if footage.missing {
             return None;
         }
-        match self.frame_at(footage, t) {
+        match self.frame_at_scaled(footage, t, scale) {
             Ok(img) => Some(img),
             Err(e) => {
                 log::warn!("media: frame of {} at {:?}: {e}", footage.path, t);
                 None
             }
         }
+    }
+
+    fn prefetch_depth(&self) -> usize {
+        MediaPool::prefetch_depth(self)
+    }
+
+    fn set_prefetch_depth(&self, frames: usize) {
+        MediaPool::set_prefetch_depth(self, frames);
     }
 
     fn vector_frame(&self, _item: ItemId, footage: &Footage, scale: f64) -> Option<Arc<Image>> {
@@ -704,7 +778,7 @@ mod tests {
     fn lru_respects_budget_and_recycles() {
         let mut c = Lru::default();
         let img = || Arc::new(Image::new(16, 16)); // 4 KiB + overhead
-        let k = |i| Key { path: "a".into(), frame: i, alpha: 0, matte: [0; 3] };
+        let k = |i| Key { path: "a".into(), frame: i, alpha: 0, matte: [0; 3], scale_q: 1000 };
         let budget = 3 * (4096 + 64);
         for i in 0..10 {
             c.insert(k(i), img(), budget);
