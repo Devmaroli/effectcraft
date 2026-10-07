@@ -29,6 +29,7 @@ const LAYERS: &[(&str, u8)] = &[
     ("hevcenc", 0),
     ("av1enc", 0),
     ("encodecraft-job", 0),
+    ("screens", 0),
     ("raster", 1),
     ("keyframe", 1),
     ("path", 1),

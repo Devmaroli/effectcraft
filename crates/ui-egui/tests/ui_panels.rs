@@ -45,6 +45,7 @@ fn window_menu_opens_the_new_panels() {
         ("metadata", PanelKind::Metadata, "metadata.projectComment"),
         ("progress", PanelKind::Progress, ""),
         ("contentAwareFill", PanelKind::ContentAwareFill, "contentFill.method"),
+        ("screenSuite", PanelKind::ScreenSuite, "screenSuite.tab.booking"),
     ] {
         open(&mut h, name);
         assert!(h.state().ui.dock.contains(kind) || h.state().ui.floating.iter().any(|f| f.panels.contains(&kind)), "{name} shown");

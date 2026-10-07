@@ -53,6 +53,7 @@ mod render_queue;
 pub(crate) mod rig3d;
 pub mod roto_cmds;
 mod scene_detect;
+pub mod screen;
 pub mod scripts;
 mod settings;
 mod shape_stroke;
@@ -158,6 +159,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(time::specs());
         v.extend(render_queue::specs());
         v.extend(encodecraft::specs());
+        v.extend(screen::specs());
         v.extend(help::specs());
         v.extend(query::specs());
         v.extend(batch::specs());

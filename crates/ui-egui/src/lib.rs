@@ -435,6 +435,7 @@ impl EffectcraftApp {
                 PanelKind::Layer | PanelKind::Flowchart | PanelKind::Viewer(_) => PanelKind::Composition,
                 PanelKind::RenderQueue => PanelKind::Timeline,
                 PanelKind::EffectControls | PanelKind::History => PanelKind::Project,
+                PanelKind::ScreenSuite => PanelKind::Properties,
                 _ => PanelKind::EffectsPresets,
             };
             self.ui.dock.open_near(p, near);

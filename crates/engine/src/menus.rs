@@ -686,6 +686,13 @@ Composition
   Add to Render Queue | renderQueue.add
   Add to EncodeCraft Queue | encodecraft.queue
   Add Output Module | render.addOutputModule
+  Screen Suite
+    Sort Booking Names | screen.sorter.sort
+    Send Sorted Names to Screen Manager | screen.sorter.send
+    Select Pasted Screen Names | screen.manager.select
+    Apply Screen Manager Presets | screen.manager.apply
+    Build Combiner Compositions | screen.manager.combine
+    Check Composition Sizes | screen.matcher.check
   ---
   Preview
     Play Current Preview | playback.toggle
@@ -1204,6 +1211,7 @@ Window
   ---
   Create Nulls From Paths | window.panel {"panel":"createNullsFromPaths"}
   VR Comp Editor | window.panel {"panel":"vrCompEditor"}
+  Screen Suite | window.panel {"panel":"screenSuite"}
   @dynamic:scriptPanels
 Help
   EffectCraft Help... | help.docs {"page":"help"} | F1

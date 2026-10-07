@@ -1,0 +1,527 @@
+[
+  {
+    "name": "1.7HD",
+    "w": 1920,
+    "h": 1080,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "1st Ring Road",
+    "w": 1008,
+    "h": 5184,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "2.6 Screen",
+    "w": 1536,
+    "h": 576,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Al Hamra - Indoor Screen",
+    "w": 640,
+    "h": 896,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Al Hamra - Outdoor Screen",
+    "w": 1840,
+    "h": 1740,
+    "group": "DOOH",
+    "selected": true
+  },
+  {
+    "name": "Al Meera Mall-Left Side",
+    "w": 2160,
+    "h": 1008,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Al Meera Mall-Right Side",
+    "w": 1440,
+    "h": 1008,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Al Nassar Tower Vertical",
+    "w": 960,
+    "h": 5328,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Al Salam Mall",
+    "w": 7680,
+    "h": 1152,
+    "group": "DOOH",
+    "selected": true
+  },
+  {
+    "name": "Al Salam Sync",
+    "w": 3072,
+    "h": 576,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Al Zawya - Screen 1 (center)",
+    "w": 860,
+    "h": 720,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Al Zawya - Screen 2 (right side)",
+    "w": 1040,
+    "h": 720,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Aqarat",
+    "w": 672,
+    "h": 1836,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Assima G & M Floors",
+    "w": 2304,
+    "h": 1152,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Avenues Gate Left Side",
+    "w": 1440,
+    "h": 864,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Avenues Gate Right Side",
+    "w": 6048,
+    "h": 864,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Baitak",
+    "w": 2624,
+    "h": 608,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Blajat-Left Side",
+    "w": 2448,
+    "h": 864,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Blajat-Right Side",
+    "w": 1152,
+    "h": 864,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Boulevard Bridge",
+    "w": 3584,
+    "h": 384,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Boulevard Wall",
+    "w": 1280,
+    "h": 1600,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Boursa (big)",
+    "w": 2400,
+    "h": 720,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Boursa (small)",
+    "w": 1440,
+    "h": 720,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Derwaza",
+    "w": 864,
+    "h": 2880,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Downtown",
+    "w": 2160,
+    "h": 1440,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Gate Digital",
+    "w": 1080,
+    "h": 1920,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Hawally Gate",
+    "w": 5832,
+    "h": 432,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Kuwait Gate",
+    "w": 4460,
+    "h": 378,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Marina 1",
+    "w": 3600,
+    "h": 864,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Marina 2",
+    "w": 3168,
+    "h": 864,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Mayar",
+    "w": 2448,
+    "h": 864,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Mubarak Al Kabeer Gate",
+    "w": 5328,
+    "h": 864,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Mubarakiya Gate",
+    "w": 4200,
+    "h": 720,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Murouj-Wall Screens",
+    "w": 1680,
+    "h": 480,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Piccadilly",
+    "w": 2027,
+    "h": 720,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Platinum Square",
+    "w": 1440,
+    "h": 1008,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Slayel and Yaal",
+    "w": 1080,
+    "h": 1920,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "The Capital Hub - Side 1",
+    "w": 1440,
+    "h": 630,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "The Gate Mall Outdoor",
+    "w": 948,
+    "h": 648,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Thuraya Screen 1 (Big)",
+    "w": 2624,
+    "h": 608,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Thuraya Screen 2 (Side)",
+    "w": 960,
+    "h": 540,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Marina - Balcony",
+    "w": 1200,
+    "h": 240,
+    "group": "Marina",
+    "selected": false
+  },
+  {
+    "name": "Marina - Bridge Screen",
+    "w": 2048,
+    "h": 960,
+    "group": "Marina",
+    "selected": false
+  },
+  {
+    "name": "Marina - Crescent Sync",
+    "w": 480,
+    "h": 1440,
+    "group": "Marina",
+    "selected": false
+  },
+  {
+    "name": "Marina - Palm Trees",
+    "w": 240,
+    "h": 960,
+    "group": "Marina",
+    "selected": false
+  },
+  {
+    "name": "Aveneus Digital",
+    "w": 1080,
+    "h": 1920,
+    "group": "Avenues",
+    "selected": false
+  },
+  {
+    "name": "Avnues Flag",
+    "w": 1080,
+    "h": 1920,
+    "group": "Avenues",
+    "selected": false
+  },
+  {
+    "name": "Diamond",
+    "w": 1440,
+    "h": 1800,
+    "group": "Avenues",
+    "selected": false
+  },
+  {
+    "name": "Eye of Kuwait",
+    "w": 7560,
+    "h": 2100,
+    "group": "Avenues",
+    "selected": false
+  },
+  {
+    "name": "Eye of Kuwait Crop",
+    "w": 3624,
+    "h": 1704,
+    "group": "Avenues",
+    "selected": false
+  },
+  {
+    "name": "Topaz (Sync)",
+    "w": 864,
+    "h": 864,
+    "group": "Avenues",
+    "selected": false
+  },
+  {
+    "name": "AL Kout Bridge",
+    "w": 2375,
+    "h": 475,
+    "group": "AL Kout",
+    "selected": false
+  },
+  {
+    "name": "360 Al Wadi",
+    "w": 768,
+    "h": 1024,
+    "group": "360 Mall",
+    "selected": false
+  },
+  {
+    "name": "360 Bridge",
+    "w": 1920,
+    "h": 766,
+    "group": "360 Mall",
+    "selected": false
+  },
+  {
+    "name": "360 Circular",
+    "w": 1920,
+    "h": 320,
+    "group": "360 Mall",
+    "selected": false
+  },
+  {
+    "name": "360 Elevator",
+    "w": 576,
+    "h": 768,
+    "group": "360 Mall",
+    "selected": false
+  },
+  {
+    "name": "360 Grand entrance",
+    "w": 1366,
+    "h": 768,
+    "group": "360 Mall",
+    "selected": false
+  },
+  {
+    "name": "360 Imax Tower",
+    "w": 1600,
+    "h": 2864,
+    "group": "360 Mall",
+    "selected": false
+  },
+  {
+    "name": "360 MUPI",
+    "w": 1080,
+    "h": 1920,
+    "group": "360 Mall",
+    "selected": false
+  },
+  {
+    "name": "360 OvalScreen",
+    "w": 1080,
+    "h": 1920,
+    "group": "360 Mall",
+    "selected": false
+  },
+  {
+    "name": "Khairan indoor 2304 x 2376",
+    "w": 2304,
+    "h": 2376,
+    "group": "Khairan Mall",
+    "selected": false
+  },
+  {
+    "name": "Khairan indoor 3456 x 1728",
+    "w": 3456,
+    "h": 1728,
+    "group": "Khairan Mall",
+    "selected": false
+  },
+  {
+    "name": "Khairan indoor 3816 x 1224",
+    "w": 3816,
+    "h": 1224,
+    "group": "Khairan Mall",
+    "selected": false
+  },
+  {
+    "name": "Khairan Outdoor 1120 x 840",
+    "w": 1120,
+    "h": 840,
+    "group": "Khairan Mall",
+    "selected": false
+  },
+  {
+    "name": "WareHouse Screen 1120 x 512",
+    "w": 1120,
+    "h": 512,
+    "group": "Warehouse Mall",
+    "selected": false
+  },
+  {
+    "name": "WareHouse Screen 2000 x 2800",
+    "w": 2000,
+    "h": 2800,
+    "group": "Warehouse Mall",
+    "selected": false
+  },
+  {
+    "name": "WareHouse Screen 2400 x 800",
+    "w": 2400,
+    "h": 800,
+    "group": "Warehouse Mall",
+    "selected": false
+  },
+  {
+    "name": "WareHouse Screen 576 x 1728",
+    "w": 576,
+    "h": 1728,
+    "group": "Warehouse Mall",
+    "selected": false
+  },
+  {
+    "name": "Dayarti 1 1440 x 600",
+    "w": 1440,
+    "h": 600,
+    "group": "Dayarti",
+    "selected": false
+  },
+  {
+    "name": "Dayarti 2 1100 x 600",
+    "w": 1100,
+    "h": 600,
+    "group": "Dayarti",
+    "selected": false
+  },
+  {
+    "name": "Dayarti 3 950 x 600",
+    "w": 950,
+    "h": 600,
+    "group": "Dayarti",
+    "selected": false
+  },
+  {
+    "name": "Murouj - Pylon",
+    "w": 624,
+    "h": 2496,
+    "group": "DOOH",
+    "selected": false
+  },
+  {
+    "name": "Grand cinema",
+    "w": 2048,
+    "h": 1080,
+    "group": "Cinemas",
+    "selected": false
+  },
+  {
+    "name": "SKY Flat",
+    "w": 1998,
+    "h": 1080,
+    "group": "Cinemas",
+    "selected": false
+  },
+  {
+    "name": "SKY Scoop",
+    "w": 2048,
+    "h": 858,
+    "group": "Cinemas",
+    "selected": false
+  }
+]

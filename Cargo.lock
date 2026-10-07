@@ -1230,6 +1230,7 @@ dependencies = [
  "effectcraft-psd",
  "effectcraft-raster",
  "effectcraft-render",
+ "effectcraft-screens",
  "effectcraft-segment",
  "effectcraft-svg",
  "effectcraft-text",
@@ -1533,6 +1534,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "effectcraft-screens"
+version = "0.4.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "effectcraft-script"
 version = "0.4.0"
 dependencies = [
@@ -1613,6 +1622,7 @@ dependencies = [
  "effectcraft-path",
  "effectcraft-project",
  "effectcraft-render",
+ "effectcraft-screens",
  "effectcraft-text",
  "effectcraft-time",
  "eframe",

@@ -1,0 +1,270 @@
+[
+  {
+    "name": "Thuraya_Full",
+    "columns": [
+      {
+        "screenName": "Thuraya Screen 1 (Big)",
+        "layout": "single",
+        "count": 1,
+        "vAlign": "top",
+        "match": [
+          2624,
+          608
+        ]
+      },
+      {
+        "screenName": "Thuraya Screen 2 (Side)",
+        "layout": "single",
+        "count": 1,
+        "vAlign": "top",
+        "match": [
+          960,
+          540
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Boursa_Full",
+    "columns": [
+      {
+        "screenName": "Boursa (small)",
+        "layout": "single",
+        "count": 1,
+        "match": [
+          1440,
+          720
+        ]
+      },
+      {
+        "screenName": "Boursa (big)",
+        "layout": "single",
+        "count": 1,
+        "match": [
+          2400,
+          720
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Al_Zawaya_Full",
+    "columns": [
+      {
+        "screenName": "Al Zawya - Screen 1 (center)",
+        "layout": "single",
+        "count": 1,
+        "match": [
+          860,
+          720
+        ]
+      },
+      {
+        "screenName": "Al Zawya - Screen 2 (right side)",
+        "layout": "single",
+        "count": 1,
+        "match": [
+          1040,
+          720
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Platinum_Screen",
+    "columns": [
+      {
+        "screenName": "Platinum Square",
+        "layout": "h-dup",
+        "count": 2,
+        "match": [
+          1440,
+          1008
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Al_Meera_Full",
+    "columns": [
+      {
+        "screenName": "Al Meera Mall-Left Side",
+        "layout": "single",
+        "count": 1,
+        "match": [
+          2160,
+          1008
+        ]
+      },
+      {
+        "screenName": "Al Meera Mall-Right Side",
+        "layout": "single",
+        "count": 1,
+        "match": [
+          1440,
+          1008
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Blajat_Full",
+    "columns": [
+      {
+        "screenName": "Blajat-Left Side",
+        "layout": "single",
+        "count": 1,
+        "match": [
+          2448,
+          864
+        ]
+      },
+      {
+        "screenName": "Blajat-Right Side",
+        "layout": "single",
+        "count": 1,
+        "match": [
+          1152,
+          864
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Avenues_Gate_Full",
+    "columns": [
+      {
+        "screenName": "Avenues Gate Left Side",
+        "layout": "single",
+        "count": 1,
+        "match": [
+          1440,
+          864
+        ]
+      },
+      {
+        "screenName": "Avenues Gate Right Side",
+        "layout": "single",
+        "count": 1,
+        "match": [
+          6048,
+          864
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Marina_Crescent_Sync",
+    "columns": [
+      {
+        "screenName": "Marina - Crescent Sync",
+        "layout": "h-dup",
+        "count": 2,
+        "match": [
+          480,
+          1440
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Marina_Palms_Full",
+    "columns": [
+      {
+        "screenName": "Marina - Palm Trees",
+        "layout": "h-dup",
+        "count": 4,
+        "match": [
+          240,
+          960
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Mourouj_Wall_AB",
+    "columns": [
+      {
+        "screenName": "Murouj-Wall Screens",
+        "layout": "v-dup",
+        "count": 3,
+        "match": [
+          1680,
+          480
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Mourouj_Wall_C",
+    "columns": [
+      {
+        "screenName": "Murouj-Wall Screens",
+        "layout": "v-dup",
+        "count": 4,
+        "match": [
+          1680,
+          480
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Capital_HUB",
+    "columns": [
+      {
+        "screenName": "The Capital Hub - Side 1",
+        "layout": "h-dup",
+        "count": 2,
+        "match": [
+          1440,
+          630
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Piccadilly_Sync",
+    "columns": [
+      {
+        "screenName": "Piccadilly",
+        "layout": "h-dup",
+        "count": 3,
+        "forceScale": true,
+        "compW": 6080,
+        "match": [
+          2027,
+          720
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Topaz_Sync",
+    "columns": [
+      {
+        "screenName": "Topaz (Sync)",
+        "layout": "h-dup",
+        "count": 2,
+        "match": [
+          864,
+          864
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Al_Salam_Sync",
+    "columns": [
+      {
+        "screenName": "Al Salam Sync",
+        "layout": "h-dup",
+        "count": 2,
+        "match": [
+          1536,
+          576
+        ]
+      }
+    ]
+  }
+]

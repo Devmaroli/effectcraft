@@ -45,6 +45,7 @@ effectcraft-hevcenc = { path = "crates/hevcenc" }
 effectcraft-av1enc = { path = "crates/av1enc" }
 effectcraft-plugin = { path = "crates/plugin" }
 encodecraft-job = { path = "crates/encodecraft-job" }
+effectcraft-screens = { path = "crates/screens" }
 
 # foundation
 thiserror = "2"
