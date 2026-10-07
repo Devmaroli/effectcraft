@@ -15,11 +15,13 @@ use std::path::{Path, PathBuf};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
-use encodecraft_job::{DEFAULT_ENQUEUE_URL, Job, MAX_CONTROL_BODY, TOKEN_HEADER, discover_ipc_token, is_health_ok, sanitize_token};
+use encodecraft_job::{
+    DEFAULT_ENQUEUE_URL, Job, MAX_CONTROL_BODY, TOKEN_HEADER, discover_ipc_token, enqueue_error_message, is_health_ok, preset_id_from_hint, sanitize_token,
+};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, has_comp, str_p};
-use crate::{EngineError, Result, Session};
+use crate::{EngineError, Event, Result, Session};
 
 const CMD: &str = "encodecraft.queue";
 const UNSAVED: &str =
@@ -62,18 +64,31 @@ fn queue_native(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(EngineError::Other(UNSAVED.into()));
     }
     let project = abs_path(path);
-    let mut job = Job::effectcraft(&project, &name, Some(cid.0));
-    job.id = Some(new_job_id());
+    let mut job = Job::effectcraft(&project, &name);
     if let Some(out) = str_p(p, "output") {
         validate_output_path(out).map_err(EngineError::Other)?;
-        job.output = Some(out.to_string());
     }
-    // Never set output_dir: EncodeCraft only accepts paths inside its configured output folder
-    // and suffixes existing files with -2, -3 instead of overwriting.
+    // Never set output_dir: EncodeCraft only accepts paths inside its configured output folder.
     job.output_dir = None;
-    if let Some(fmt) = str_p(p, "format") {
+    if let Some(preset) = str_p(p, "presetId").or_else(|| str_p(p, "preset_id")) {
+        validate_preset_id(preset).map_err(EngineError::Other)?;
+        job.preset_id = preset.to_string();
+    } else if let Some(fmt) = str_p(p, "format") {
         validate_format(fmt).map_err(EngineError::Other)?;
-        job.format = Some(fmt.to_string());
+        job.preset_id = preset_id_from_hint(fmt);
+    }
+    if let Some(m) = str_p(p, "mezzanine") {
+        validate_format(m).map_err(EngineError::Other)?;
+        job.set_mezzanine(m);
+    }
+    if let Some(w) = p.get("workArea").or_else(|| p.get("work_area")).and_then(Value::as_bool) {
+        job.set_work_area(w);
+    }
+    if let Some(b) = p.get("startQueue").or_else(|| p.get("start_queue")).and_then(Value::as_bool) {
+        job.start_queue = b;
+    }
+    if let Some(n) = str_p(p, "naming") {
+        job.naming = Some(n.to_string());
     }
     let url = str_p(p, "url").map(str::to_string).or_else(|| std::env::var("ENCODECRAFT_URL").ok()).unwrap_or_else(|| DEFAULT_ENQUEUE_URL.into());
     parse_loopback_http_url(&url).map_err(EngineError::Other)?;
@@ -103,7 +118,7 @@ fn queue_native(s: &mut Session, p: &Value) -> Result<Value> {
                 s.toast(format!("Queued “{name}” in EncodeCraft"));
                 Ok(queued_json(&job, "http", Some(status), Some(resp), None))
             }
-            Ok((status, resp)) => Err(EngineError::Other(format!("EncodeCraft refused the job (HTTP {status}): {}", truncate(&resp, 240)))),
+            Ok((status, resp)) => Err(refuse(s, status, &resp)),
             Err(http_err) => queue_via_inbox(s, &job, &body, &url, inbox.as_deref(), launch, &name, Some(http_err.as_str())),
         };
     }
@@ -114,7 +129,7 @@ fn queue_native(s: &mut Session, p: &Value) -> Result<Value> {
 #[allow(clippy::too_many_arguments)]
 fn queue_via_inbox(s: &mut Session, job: &Job, body: &str, url: &str, inbox: Option<&Path>, launch: bool, name: &str, http_err: Option<&str>) -> Result<Value> {
     let inbox_path = match inbox {
-        Some(dir) => write_inbox(dir, job.id.as_deref().unwrap_or("job"), body)?,
+        Some(dir) => write_inbox(dir, &new_job_id(), body)?,
         None => {
             let why = http_err.unwrap_or("EncodeCraft is not running");
             return Err(EngineError::Other(format!(
@@ -140,6 +155,7 @@ fn queue_via_inbox(s: &mut Session, job: &Job, body: &str, url: &str, inbox: Opt
                             s.toast(format!("Queued “{name}” in EncodeCraft"));
                             return Ok(queued_json(job, "http-after-launch", Some(status), Some(resp), Some(inbox_path.to_string_lossy().into_owned())));
                         }
+                        Ok((status, resp)) => return Err(refuse(s, status, &resp)),
                         _ => {}
                     }
                 }
@@ -161,14 +177,19 @@ fn queued_json(job: &Job, via: &str, status: Option<u16>, response: Option<Strin
     json!({
         "queued": true,
         "via": via,
-        "id": job.id,
-        "project": job.project,
-        "composition": job.composition,
-        "compositionId": job.composition_id,
+        "project": job.project_path(),
+        "composition": job.composition(),
+        "presetId": job.preset_id,
         "httpStatus": status,
         "response": response.map(|r| truncate(&r, MAX_RESULT_BODY)),
         "inbox": inbox,
     })
+}
+
+fn refuse(s: &mut Session, status: u16, body: &str) -> EngineError {
+    let msg = enqueue_error_message(status, body);
+    s.events.push(Event::Toast { message: msg.clone(), error: true });
+    EngineError::Other(msg)
 }
 
 fn b_launch(p: &Value) -> bool {
@@ -239,8 +260,13 @@ fn validate_output_path(path: &str) -> std::result::Result<(), String> {
 }
 
 fn validate_format(fmt: &str) -> std::result::Result<(), String> {
-    if fmt.is_empty() || fmt.len() > 32 || has_ctrl(fmt) || !fmt.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
-        return Err("EncodeCraft format must be a short name such as h264, hevc, prores, webm".into());
+    validate_preset_id(fmt)
+}
+
+fn validate_preset_id(id: &str) -> std::result::Result<(), String> {
+    if id.is_empty() || id.len() > 64 || has_ctrl(id) || id.contains("..") || !id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+    {
+        return Err("EncodeCraft preset must be a short id such as system.h264-mp4".into());
     }
     Ok(())
 }
@@ -559,7 +585,7 @@ pub fn specs() -> Vec<CommandSpec> {
         label: "Add to EncodeCraft Queue",
         menu: &["Composition"],
         shortcut: Some("Cmd+Alt+M"),
-        params: "{comp?: id|name, output?: path, format?: h264|hevc|av1|prores|webm|png|jpeg|tiff|exr|gif, url?: http://127.0.0.1:port/v1/enqueue, inbox?: absolute folder, launch?: bool (default true; open EncodeCraft when the HTTP server is down), token?: IPC token (default: ENCODECRAFT_TOKEN or <data dir>/ipc-token)}",
+        params: "{comp?: id|name, presetId?: system.h264-mp4, format?: h264|hevc|… (mapped to presetId), mezzanine?: prores, workArea?: bool, startQueue?: bool (default true), naming?: {name}_{width}x{height}, output?: path (validated, not sent — EncodeCraft chooses the output folder), url?: http://127.0.0.1:port/v1/enqueue, inbox?: absolute folder, launch?: bool (default true; open EncodeCraft when the HTTP server is down), token?: IPC token (default: ENCODECRAFT_TOKEN or <data dir>/ipc-token)}",
         enabled: has_comp,
         run: queue,
         journal: false,
@@ -695,7 +721,13 @@ mod tests {
             return http_json(401, r#"{"error":"unauthorized"}"#);
         }
         if first.starts_with("POST /v1/enqueue") {
-            let body = if (200..300).contains(&enqueue_status) { r#"{"id":"q1","status":"queued"}"# } else { r#"{"error":"refused"}"# };
+            let body = if (200..300).contains(&enqueue_status) {
+                r#"{"ok":true,"ids":["q1"]}"#
+            } else if enqueue_status == 400 {
+                r#"{"ok":false,"ids":[],"error":"the preset is not installed"}"#
+            } else {
+                r#"{"ok":false,"ids":[],"error":"refused"}"#
+            };
             return http_json(enqueue_status, body);
         }
         http_json(404, r#"{"error":"not found"}"#)
@@ -750,8 +782,12 @@ mod tests {
         assert!(!req.to_ascii_lowercase().contains("\r\norigin:"), "must not send Origin\n{req}");
         assert!(!req.to_ascii_lowercase().contains("sec-fetch-site"), "{req}");
         assert!(req.contains(&name), "{req}");
-        assert!(req.contains("encodecraft.job/v1"), "{req}");
-        assert!(!req.contains("outputDir"), "{req}");
+        assert!(req.contains(r#""schema":1"#), "schema must be integer 1\n{req}");
+        assert!(!req.contains("encodecraft.job/v1"), "must not send the old string schema\n{req}");
+        assert!(req.contains(r#""kind":"effectcraft""#), "{req}");
+        assert!(req.contains(r#""preset_id":"system.h264-mp4""#), "{req}");
+        assert!(req.contains(r#""start_queue":true"#), "{req}");
+        assert!(!req.contains("output_dir") && !req.contains("outputDir"), "{req}");
         assert_eq!(srv.enqueue_status, 200);
         assert!(s.drain_events().iter().any(|e| matches!(e, crate::Event::Toast { error: false, .. })));
     }
@@ -762,7 +798,25 @@ mod tests {
         let mut s = session_saved(&t.0);
         let srv = serve(503);
         let e = s.execute("encodecraft.queue", json!({"url": srv.url, "launch": false, "token": "test-token"})).unwrap_err().to_string();
-        assert!(e.contains("503") || e.contains("refused"), "{e}");
+        assert!(e.contains("refused") || e.contains("503"), "{e}");
+        assert!(
+            s.drain_events().iter().any(|ev| matches!(ev, crate::Event::Toast { error: true, message } if message.contains("refused"))),
+            "refusal must be an in-app error toast"
+        );
+    }
+
+    #[test]
+    fn http_400_shows_encodecraft_error_in_toast() {
+        let t = tmp();
+        let mut s = session_saved(&t.0);
+        let srv = serve(400);
+        let e = s.execute("encodecraft.queue", json!({"url": srv.url, "launch": false, "token": "test-token"})).unwrap_err().to_string();
+        assert!(e.contains("the preset is not installed"), "{e}");
+        assert!(!e.contains("HTTP 400") || e.contains("preset"), "{e}");
+        assert!(
+            s.drain_events().iter().any(|ev| matches!(ev, crate::Event::Toast { error: true, message } if message.contains("the preset is not installed"))),
+            "EncodeCraft's error must appear in-app, not only in logs"
+        );
     }
 
     #[test]
@@ -805,9 +859,11 @@ mod tests {
         let path = r["inbox"].as_str().unwrap();
         let text = std::fs::read_to_string(path).unwrap();
         let job: encodecraft_job::Job = serde_json::from_str(&text).unwrap();
-        assert_eq!(job.composition, r["composition"]);
-        assert!(job.project.contains("demo.ecproj"));
+        assert_eq!(job.composition(), r["composition"].as_str());
+        assert!(job.project_path().contains("demo.ecproj"));
         assert!(job.output_dir.is_none());
+        assert_eq!(job.schema, 1);
+        assert_eq!(job.preset_id, "system.h264-mp4");
         assert!(path.starts_with(&*inbox.to_string_lossy()));
     }
 

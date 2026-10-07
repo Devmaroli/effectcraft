@@ -12,3 +12,8 @@ workspace = true
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+# Native only: L0 must still build for wasm32 (serde only there). EncodeCraft's data dir
+# is `directories::ProjectDirs::from("dev","EncodeCraft","EncodeCraft").data_dir()`.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+directories = { workspace = true }
