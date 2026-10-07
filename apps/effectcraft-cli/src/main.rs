@@ -103,6 +103,9 @@ const USAGE: &str = "usage: effectcraft-cli <info|commands|exec|run|props|get|se
   bench [--comp C] [--time S] [--scale K] [--n N] [--play N] [--gpu [--adv3d]]   per-layer/effect render timings;
                                            --play N renders N consecutive frames with/without the layer cache;
                                            --gpu compares CPU and GPU ms/frame for every comp at Full and Half
+  bench --dooh [--play N] [--gpu] [--serial] [--json]
+                                           25 fps DOOH comps (1920x1080, 3072x576, 6080x720, 960x960) with
+                                           video, stills, text, effects and blend modes; reports fps vs 25
   bench --ops [--small] [--layers N] [--comps N] [--footage N]
                                            everyday operations on a large generated project: startup, open,
                                            save, auto-save, edits + undo/redo, timeline, Project panel
@@ -171,6 +174,8 @@ const FLAGS: &[&str] = &[
     "--work-area",
     "--queue",
     "--ops",
+    "--dooh",
+    "--serial",
     "--small",
     "--adv3d",
 ];
@@ -737,6 +742,9 @@ fn bench_cmd(args: &Args) -> Result<(), Failure> {
     if args.flag("--ops") {
         return bench_ops(args);
     }
+    if args.flag("--dooh") {
+        return bench_dooh(args);
+    }
     let mut s = effectcraft_host::session();
     match &args.project {
         Some(p) => s.execute("file.open", json!({"path": p})),
@@ -764,6 +772,77 @@ fn bench_cmd(args: &Args) -> Result<(), Failure> {
 /// frame, open, save, auto-save, small and large edits with undo/redo, first frame, timeline
 /// scrolling and the Project panel. `--small` for a quick run; `--layers N`, `--comps N`,
 /// `--footage N` resize it. See docs/architecture.md ▸ Performance.
+fn bench_dooh(args: &Args) -> Result<(), Failure> {
+    use effectcraft_engine::dooh::{self, DoohMedia, TARGET_FPS};
+    use effectcraft_render::Backend;
+    let n = args.num("--play")?.unwrap_or(25.0).max(1.0) as usize;
+    let serial_only = args.flag("--serial");
+    let want_gpu = args.flag("--gpu");
+    let gpu = want_gpu.then(effectcraft_gpu::Gpu::headless).flatten();
+    let gpu_name = gpu.as_ref().map(effectcraft_render::Accelerator::name);
+    let (p, comps) = dooh::project();
+    let media = DoohMedia::default();
+    let scales = [1.0_f64, 0.5, 0.25];
+    let mut runs = Vec::new();
+    for (name, cid, w, h) in &comps {
+        for scale in scales {
+            let serial = dooh::play(&p, &media, *cid, name, *w, *h, scale, false, false, n, None, Backend::Cpu);
+            runs.push(serial.clone());
+            if !serial_only {
+                let parallel_cold = dooh::play(&p, &media, *cid, name, *w, *h, scale, true, false, n, None, Backend::Cpu);
+                let parallel_warm = dooh::play(&p, &media, *cid, name, *w, *h, scale, true, true, n, None, Backend::Cpu);
+                runs.push(parallel_cold);
+                runs.push(parallel_warm);
+            }
+            if let Some(g) = gpu.as_ref() {
+                let gpu_run = dooh::play(&p, &media, *cid, name, *w, *h, scale, true, true, n, Some(g), Backend::Gpu);
+                runs.push(gpu_run);
+            }
+        }
+    }
+    if args.flag("--json") {
+        emit(
+            &json!({
+                "targetFps": TARGET_FPS,
+                "frames": n,
+                "host": std::env::consts::OS,
+                "arch": std::env::consts::ARCH,
+                "gpu": gpu_name,
+                "gpuRequested": want_gpu,
+                "runs": runs.iter().map(dooh::PlayRun::json).collect::<Vec<_>>(),
+            }),
+            true,
+        );
+    } else {
+        note!("DOOH preview bench: {n} frames at {TARGET_FPS} fps target ({})", std::env::consts::OS);
+        if let Some(n) = &gpu_name {
+            note!("  GPU adapter: {n}");
+        } else if want_gpu {
+            note!("  GPU: none (this machine has no usable wgpu adapter; CPU path only)");
+        } else {
+            note!("  GPU: not requested (pass --gpu to try Mercury GPU Acceleration)");
+        }
+        for r in &runs {
+            let res = if (r.scale - 1.0).abs() < 1e-9 {
+                "Full"
+            } else if (r.scale - 0.5).abs() < 1e-9 {
+                "Half"
+            } else {
+                "Quarter"
+            };
+            let mode = match (r.gpu, r.parallel, r.cache) {
+                (true, _, _) => "gpu warm",
+                (false, false, _) => "serial cold",
+                (false, true, false) => "parallel cold",
+                (false, true, true) => "parallel warm",
+            };
+            let rt = if r.realtime() { "real-time" } else { "NOT real-time" };
+            note!("  {:<18} {:>4}×{:<4} {:<8} {mode:<15}  {:>7.2} ms/frame  {:>6.1} fps  {rt}", r.label, r.width, r.height, res, r.mean_ms, r.fps);
+        }
+    }
+    Ok(())
+}
+
 fn bench_ops(args: &Args) -> Result<(), Failure> {
     use effectcraft_engine::perf::{self, LargeSpec};
     let mut spec = if args.flag("--small") { LargeSpec::small() } else { LargeSpec::default() };

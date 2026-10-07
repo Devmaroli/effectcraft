@@ -41,7 +41,14 @@ intermediate image.
 
 ```sh
 cargo run --release -p effectcraft-cli -- bench --n 10 --play 30
+cargo run --release -p effectcraft-cli -- bench --dooh --play 25 --gpu
 ```
 
-prints per-layer and per-effect timings for one frame, and playback timings with and without the
-layer cache.
+`bench` prints per-layer and per-effect timings for one frame, and playback timings with and
+without the layer cache. `bench --dooh` builds 25 fps digital-out-of-home compositions
+(1920×1080, 3072×576, 6080×720, 960×960) with a video plate, stills, a title, Gaussian Blur /
+Levels / Glow and blend modes, then reports achieved fps against 25 fps at Full, Half and
+Quarter resolution. `--serial` is the old one-layer-at-a-time walk; `--gpu` tries the wgpu
+compositor (skips with a note when this machine has no adapter). `--json` writes a machine-
+readable report. First numbers (Linux cloud VM, 4 cores, no GPU) are in [gaps.md](gaps.md) G5:
+Full 1080p and 6080×720 were not real-time; Half was real-time on all four sizes.

@@ -5,7 +5,10 @@
 //! - [`MediaPool`]: decodes footage frames on demand into [`effectcraft_raster::Image`]s
 //!   (premultiplied f32, sRGB/Rec.709-encoded values, as the compositor expects) with a
 //!   memory-budgeted LRU frame cache, one decoder per source, and the decoder kept positioned for
-//!   sequential playback. Also audio ([`MediaPool::audio_samples`]) and thumbnails.
+//!   sequential playback. Sequential playback decodes several frames ahead (default
+//!   [`DEFAULT_PREFETCH_DEPTH`]); Half/Quarter preview may cache movie frames already
+//!   downsampled. Decode is FilmCraft's pure-Rust software path (no hardware video decode). Also
+//!   audio ([`MediaPool::audio_samples`]) and thumbnails.
 //!
 //! Video containers (MP4/MOV, Matroska/WebM) and codecs (H.264, HEVC, VP9, AV1, ProRes, DNxHD,
 //! MJPEG; AAC, Opus, PCM, MP3/FLAC/Vorbis) come from FilmCraft's pure-Rust crates (git dependency,
@@ -22,7 +25,7 @@ pub use layered::vector_doc;
 mod pool;
 mod probe;
 
-pub use pool::{DEFAULT_BUDGET, MediaPool, PoolStats};
+pub use pool::{DEFAULT_BUDGET, DEFAULT_PREFETCH_DEPTH, MediaPool, PoolStats};
 pub use probe::{DEFAULT_SEQUENCE_RATE, probe, probe_bytes, probe_model, probe_single, sequence_files};
 
 /// Errors from probing or decoding footage.
