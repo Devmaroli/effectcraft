@@ -193,3 +193,37 @@ fn panels_snapshot() {
         img.save(format!("{dir}/{panel}{scope}.png")).unwrap();
     }
 }
+
+#[test]
+fn screen_suite_booking_build_and_extra_stack_warning() {
+    let mut s = Session::default();
+    s.execute("comp.new", json!({"name": "Plate", "width": 320, "height": 180, "duration": 4, "frameRate": 25.0})).unwrap();
+    s.execute("screen.sorter.sort", json!({"paste": "1.7HD\nAl Salam Sync\nPiccadilly\nBaitak\nDiamond\nGhost Screen That Does Not Exist", "cleanup": true}))
+        .unwrap();
+    let mut h = Harness::builder().with_size(egui::vec2(1680.0, 1020.0)).build_eframe(|_| EffectcraftApp::new(s));
+    h.run_steps(3);
+    open(&mut h, "screenSuite");
+    h.state_mut().ui.maximized = Some(PanelKind::ScreenSuite);
+    h.run_steps(4);
+    assert!(h.state().auto.find("screenSuite.tab.booking").is_some());
+    assert!(h.state().auto.find("screenSuite.paste").is_some());
+    assert!(h.state().auto.find("screenSuite.sort").is_some());
+
+    h.state_mut().session.execute("screen.sorter.send", json!({"screenSpecific": false})).unwrap();
+    h.run_steps(4);
+    assert_eq!(h.state().session.state.screen.tab, "build");
+    assert!(h.state().session.state.screen.manager.show_selected_only);
+    assert!(h.state().auto.find("screenSuite.apply").is_some() || h.state().auto.find("screenSuite.tab.build").is_some());
+
+    h.state_mut().session.execute("comp.new", json!({"name": "Al Salam Sync A", "width": 1536, "height": 576, "frameRate": 25.0, "open": false})).unwrap();
+    h.state_mut().session.execute("comp.new", json!({"name": "Al Salam Sync B", "width": 1536, "height": 576, "frameRate": 25.0, "open": false})).unwrap();
+    h.state_mut().session.execute("screen.manager.select", json!({"names": ["Al Salam Sync"], "jobMode": "bySize"})).unwrap();
+    h.state_mut().session.execute("screen.manager.combine", json!({"combiner": "Al_Salam_Sync"})).unwrap();
+    h.state_mut().session.execute("screen.matcher.check", json!({"names": ["Al Salam Sync"]})).unwrap();
+    h.state_mut().session.execute("screen.suite.tab", json!({"tab": "qc"})).unwrap();
+    h.run_steps(4);
+    assert!(!h.state().session.state.screen.manager.warnings.is_empty());
+    assert!(!h.state().session.state.screen.matcher.oversized.is_empty());
+    assert_eq!(h.state().session.state.screen.tab, "qc");
+    assert!(h.state().auto.find("screenSuite.matcher.check").is_some());
+}
