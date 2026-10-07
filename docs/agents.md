@@ -166,6 +166,9 @@ build real projects through these interfaces; they are worked examples of everyt
   app from an absolute existing path (same folder as `effectcraft`, a well-known install
   location, or `ENCODECRAFT_BIN` — never `PATH`). Unsaved or dirty projects fail with a
   save-first error. EncodeCraft renders through `effectcraft-cli`.
+* **Screen Suite** (this fork, **not ported yet**): Kuwait DOOH booking → comps → EncodeCraft →
+  size QC. Read [screen-suite-analysis.md](screen-suite-analysis.md) for per-tool behaviour,
+  architecture mapping, and UX options. Do not implement until a UX direction is chosen.
 * **Essential Graphics**: controls can be addressed by name (`essential.set {"layer":"#1",
   "control":"Title","value":"John Smith"}`); a command that targets an explicit `comp` runs even
   when the active comp would disable it (`essential.exportTemplate {"comp":"Lower Third", …}`).
