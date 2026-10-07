@@ -31,6 +31,11 @@ impl EffectcraftApp {
                 out.push((panels::viewers::panel(id), t));
             }
         }
+        let n = effectcraft_screens::collect_alerts(&self.session.state.screen.sorter, &self.session.state.screen.manager, &self.session.state.screen.matcher)
+            .len();
+        if n > 0 {
+            out.push((PanelKind::ScreenSuite, format!("Screen Suite ({n})")));
+        }
         let Some(comp) = self.session.active_comp() else { return out };
         if let Some(l) = self.session.state.selected_layers.first().and_then(|id| comp.layer(*id)) {
             out.push((PanelKind::EffectControls, format!("Effect Controls {}", l.name)));
@@ -66,21 +71,28 @@ impl EffectcraftApp {
 
     /// The Composition and Timeline tabs' close button, label-colour swatch and viewer lock.
     fn tab_decos(&self) -> Vec<(PanelKind, dock::TabDeco)> {
-        let Some(cid) = self.session.active_comp_id() else { return vec![] };
-        let swatch = self.comp_swatch(cid);
-        let mut v: Vec<(PanelKind, dock::TabDeco)> =
-            vec![(PanelKind::Timeline, dock::TabDeco { swatch, locked: self.ui.locked_tabs.contains(&PanelKind::Timeline.id()), viewer: true })];
-        // Every Composition viewer: its comp's swatch and its own lock.
-        for id in std::iter::once(0).chain(self.ui.viewers.keys().copied().filter(|v| *v != 0)) {
-            let p = panels::viewers::panel(id);
-            let swatch = panels::viewers::comp_of(self, id).map_or(self.tokens.text_faint, |c| self.comp_swatch(c));
-            v.push((p, dock::TabDeco { swatch, locked: self.ui.locked_tabs.contains(&p.id()), viewer: true }));
+        let mut v: Vec<(PanelKind, dock::TabDeco)> = Vec::new();
+        if let Some(cid) = self.session.active_comp_id() {
+            let swatch = self.comp_swatch(cid);
+            v.push((PanelKind::Timeline, dock::TabDeco { swatch, locked: self.ui.locked_tabs.contains(&PanelKind::Timeline.id()), viewer: true }));
+            // Every Composition viewer: its comp's swatch and its own lock.
+            for id in std::iter::once(0).chain(self.ui.viewers.keys().copied().filter(|v| *v != 0)) {
+                let p = panels::viewers::panel(id);
+                let swatch = panels::viewers::comp_of(self, id).map_or(self.tokens.text_faint, |c| self.comp_swatch(c));
+                v.push((p, dock::TabDeco { swatch, locked: self.ui.locked_tabs.contains(&p.id()), viewer: true }));
+            }
+            // Effect Controls carries the selected layer's label colour.
+            if let Some(l) = self.session.active_comp().and_then(|c| self.session.state.selected_layers.first().and_then(|id| c.layer(*id)))
+                && l.label != effectcraft_engine::color::Label::None
+            {
+                v.push((PanelKind::EffectControls, dock::TabDeco { swatch: self.tokens.label(l.label), locked: false, viewer: false }));
+            }
         }
-        // Effect Controls carries the selected layer's label colour.
-        if let Some(l) = self.session.active_comp().and_then(|c| self.session.state.selected_layers.first().and_then(|id| c.layer(*id)))
-            && l.label != effectcraft_engine::color::Label::None
-        {
-            v.push((PanelKind::EffectControls, dock::TabDeco { swatch: self.tokens.label(l.label), locked: false, viewer: false }));
+        let alerts =
+            effectcraft_screens::collect_alerts(&self.session.state.screen.sorter, &self.session.state.screen.manager, &self.session.state.screen.matcher);
+        if !alerts.is_empty() {
+            let swatch = if alerts.iter().any(|a| a.level == effectcraft_screens::AlertLevel::Error) { self.tokens.danger } else { self.tokens.warning };
+            v.push((PanelKind::ScreenSuite, dock::TabDeco { swatch, locked: false, viewer: false }));
         }
         v
     }

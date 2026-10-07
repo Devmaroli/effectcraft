@@ -1,7 +1,11 @@
 //! Window ▸ Screen Suite: Size Sorter, Screen Manager, Adapter, deliverables and Size Matcher.
+//!
+//! Every flag (extra-stack size, missing/mismatch, Size Matcher) is painted **in this panel**:
+//! a persistent red/orange banner, a count badge on the tab, and a highlighted row. Nothing is
+//! emailed or sent outside EffectCraft.
 
-use effectcraft_screens::{JobMode, MatchMode};
-use egui::{Color32, Rect, RichText, Vec2};
+use effectcraft_screens::{AlertLevel, JobMode, MatchMode, PanelAlert, collect_alerts, tab_alert_count};
+use egui::{Color32, Rect, RichText, Stroke, Vec2};
 use serde_json::{Value, json};
 
 use crate::EffectcraftApp;
@@ -27,6 +31,63 @@ fn auto_btn(app: &mut EffectcraftApp, ui: &mut egui::Ui, id: &str, label: &str) 
     r.clicked()
 }
 
+fn fill_for(level: AlertLevel) -> Color32 {
+    match level {
+        AlertLevel::Error => Color32::from_rgb(0x6a, 0x18, 0x10),
+        AlertLevel::Warning => Color32::from_rgb(0x5a, 0x3a, 0x08),
+    }
+}
+
+fn stroke_for(app: &EffectcraftApp, level: AlertLevel) -> Stroke {
+    match level {
+        AlertLevel::Error => Stroke::new(2.0, app.tokens.danger),
+        AlertLevel::Warning => Stroke::new(2.0, app.tokens.warning),
+    }
+}
+
+fn fg_for(level: AlertLevel) -> Color32 {
+    match level {
+        AlertLevel::Error => Color32::from_rgb(0xff, 0xe0, 0x80),
+        AlertLevel::Warning => Color32::from_rgb(0xff, 0xc8, 0x6a),
+    }
+}
+
+fn paint_banner(app: &mut EffectcraftApp, ui: &mut egui::Ui, alerts: &[PanelAlert]) {
+    if alerts.is_empty() {
+        return;
+    }
+    let errors = alerts.iter().any(|a| a.level == AlertLevel::Error);
+    let level = if errors { AlertLevel::Error } else { AlertLevel::Warning };
+    let n = alerts.len();
+    let inner = egui::Frame::new().fill(fill_for(level)).stroke(stroke_for(app, level)).inner_margin(10.0).show(ui, |ui| {
+        ui.colored_label(fg_for(level), RichText::new(format!("Look out — {n} issue{} in this job", if n == 1 { "" } else { "s" })).strong().size(16.0));
+        ui.colored_label(fg_for(level), RichText::new("Shown here in Screen Suite. Nothing is sent outside the app.").small());
+        for a in alerts {
+            ui.colored_label(fg_for(a.level), format!("{} — {}: {}", a.title, a.row, a.message));
+        }
+    });
+    app.auto.add("screenSuite.alert.banner", inner.response.rect, "Look out");
+    app.auto.add("screenSuite.alert.count", inner.response.rect, &n.to_string());
+    ui.add_space(6.0);
+}
+
+fn paint_alert_row(app: &mut EffectcraftApp, ui: &mut egui::Ui, alert: &PanelAlert, extra: &str) {
+    let inner = egui::Frame::new().fill(fill_for(alert.level)).stroke(stroke_for(app, alert.level)).inner_margin(6.0).show(ui, |ui| {
+        ui.colored_label(fg_for(alert.level), RichText::new(format!("{}  [{}]", extra, alert.kind)).strong());
+        if extra != alert.message {
+            ui.colored_label(fg_for(alert.level), &alert.message);
+        }
+    });
+    app.auto.add(&format!("screenSuite.alert.row.{}", alert.id), inner.response.rect, &alert.row);
+}
+
+fn alert_for<'a>(alerts: &'a [PanelAlert], tab: &str, name: &str) -> Option<&'a PanelAlert> {
+    let n = name.to_ascii_lowercase();
+    alerts
+        .iter()
+        .find(|a| a.tab == tab && (a.row.eq_ignore_ascii_case(name) || a.row.to_ascii_lowercase().contains(&n) || n.contains(&a.row.to_ascii_lowercase())))
+}
+
 pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(8.0)).layout(egui::Layout::top_down(egui::Align::Min)));
     ui.set_min_size(Vec2::new((rect.width() - 16.0).max(1.0), 0.0));
@@ -35,12 +96,21 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     ui.label(RichText::new("Always 25 fps. Studio sizes win (Piccadilly 2027×720, Al Salam 1536 / 3072×576).").small().color(t.text_dim));
     ui.add_space(6.0);
 
+    let alerts = collect_alerts(&app.session.state.screen.sorter, &app.session.state.screen.manager, &app.session.state.screen.matcher);
+    paint_banner(app, &mut ui, &alerts);
+
     ui.horizontal(|ui| {
         let cur = app.session.state.screen.tab.clone();
         for (id, label, auto) in TABS {
+            let n = tab_alert_count(&alerts, id);
             let on = cur == id;
-            let r = ui.selectable_label(on, label);
+            let text = if n == 0 { label.to_string() } else { format!("{label} ({n})") };
+            let rich = if n == 0 { RichText::new(text) } else { RichText::new(text).color(app.tokens.danger).strong() };
+            let r = ui.selectable_label(on, rich);
             app.auto.add(auto, r.rect, label);
+            if n > 0 {
+                app.auto.add(&format!("{auto}.badge"), r.rect, &n.to_string());
+            }
             if r.clicked() {
                 exec(app, "screen.suite.tab", json!({"tab": id}));
             }
@@ -48,29 +118,17 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     });
     ui.separator();
 
-    let warnings: Vec<String> =
-        app.session.state.screen.manager.warnings.iter().map(|w| w.message()).chain(app.session.state.screen.matcher.oversized.iter().cloned()).collect();
-    if !warnings.is_empty() {
-        egui::Frame::new().fill(Color32::from_rgb(0x6a, 0x18, 0x10)).stroke(egui::Stroke::new(2.0, t.warning)).inner_margin(8.0).show(&mut ui, |ui| {
-            ui.colored_label(t.warning, RichText::new("Look out — combined size grew past the norm").strong());
-            for w in &warnings {
-                ui.colored_label(Color32::from_rgb(0xff, 0xe0, 0x80), w);
-            }
-        });
-        ui.add_space(6.0);
-    }
-
     let tab = app.session.state.screen.tab.clone();
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(&mut ui, |ui| match tab.as_str() {
-        "build" => build_tab(app, ui),
+        "build" => build_tab(app, ui, &alerts),
         "adapter" => adapter_tab(app, ui),
         "deliver" => deliver_tab(app, ui),
-        "qc" => qc_tab(app, ui),
-        _ => booking_tab(app, ui),
+        "qc" => qc_tab(app, ui, &alerts),
+        _ => booking_tab(app, ui, &alerts),
     });
 }
 
-fn booking_tab(app: &mut EffectcraftApp, ui: &mut egui::Ui) {
+fn booking_tab(app: &mut EffectcraftApp, ui: &mut egui::Ui, alerts: &[PanelAlert]) {
     ui.label("Paste booked screen names");
     let mut paste = app.session.state.screen.paste.clone();
     let r = ui.add(egui::TextEdit::multiline(&mut paste).desired_width(f32::INFINITY).desired_rows(6).hint_text("Jahra Prime, Al Salam Sync, …"));
@@ -167,14 +225,33 @@ fn booking_tab(app: &mut EffectcraftApp, ui: &mut egui::Ui) {
     let sorter = app.session.state.screen.sorter.clone();
     ui.label(RichText::new(format!("{} size groups · {} flags", sorter.rows.len(), sorter.flags.len())).small());
     for row in &sorter.rows {
-        ui.label(format!("{}  {}  ({} screens)", row.use_name, row.size, row.count));
+        let line = format!("{}  {}  ({} screens)", row.use_name, row.size, row.count);
+        if let Some(a) = alert_for(alerts, "booking", &row.use_name) {
+            paint_alert_row(app, ui, a, &line);
+        } else if row.needs_review {
+            let fake = PanelAlert {
+                id: format!("review-{}", row.use_name),
+                tab: "booking".into(),
+                level: AlertLevel::Warning,
+                kind: "needsReview".into(),
+                row: row.use_name.clone(),
+                title: "Needs a look".into(),
+                message: row.reason.clone(),
+            };
+            paint_alert_row(app, ui, &fake, &line);
+        } else {
+            ui.label(line);
+        }
     }
-    for f in &sorter.flags {
-        ui.colored_label(app.tokens.warning, format!("{}: {}", f.kind, f.message));
+    for a in alerts.iter().filter(|a| a.tab == "booking") {
+        if sorter.rows.iter().any(|r| alert_for(std::slice::from_ref(a), "booking", &r.use_name).is_some()) {
+            continue;
+        }
+        paint_alert_row(app, ui, a, &format!("{}: {}", a.title, a.row));
     }
 }
 
-fn build_tab(app: &mut EffectcraftApp, ui: &mut egui::Ui) {
+fn build_tab(app: &mut EffectcraftApp, ui: &mut egui::Ui, alerts: &[PanelAlert]) {
     let m = app.session.state.screen.manager.clone();
     ui.label(if m.mode == JobMode::ScreenSpecific {
         "Matching by name (90%, no aliases — Baitak is not Top Gear)"
@@ -193,8 +270,12 @@ fn build_tab(app: &mut EffectcraftApp, ui: &mut egui::Ui) {
         }
     });
     for row in &m.matches {
-        let color = if row.status == "ok" { app.tokens.text } else { app.tokens.danger };
-        ui.colored_label(color, format!("{} → {}  {}  [{}]", row.asked, row.preset, row.detail, row.status));
+        let line = format!("{} → {}  {}  [{}]", row.asked, row.preset, row.detail, row.status);
+        if let Some(a) = alert_for(alerts, "build", &row.asked) {
+            paint_alert_row(app, ui, a, &line);
+        } else {
+            ui.label(line);
+        }
     }
     ui.add_space(6.0);
     if auto_btn(app, ui, "screenSuite.apply", "Apply presets (25 fps)") {
@@ -204,7 +285,18 @@ fn build_tab(app: &mut EffectcraftApp, ui: &mut egui::Ui) {
         exec(app, "screen.sizeMaster.apply", json!({"tool": "sizeMaster"}));
     }
     for c in &m.combiners {
-        ui.label(format!("Combiner {}  {}×{}  ({} faces)", c.name, c.width, c.height, c.faces.len()));
+        let line = format!("Combiner {}  {}×{}  ({} faces)", c.name, c.width, c.height, c.faces.len());
+        if let Some(a) = alerts.iter().find(|a| a.kind == "extraStack" && (a.row.contains(&c.name) || c.name.contains(&a.row) || a.message.contains(&c.name))) {
+            paint_alert_row(app, ui, a, &line);
+        } else {
+            ui.label(line);
+        }
+    }
+    for a in alerts.iter().filter(|a| a.kind == "extraStack") {
+        if m.combiners.iter().any(|c| a.row.contains(&c.name) || c.name.contains(&a.row) || a.message.contains(&c.name)) {
+            continue;
+        }
+        paint_alert_row(app, ui, a, &a.message);
     }
 }
 
@@ -243,7 +335,7 @@ fn deliver_tab(app: &mut EffectcraftApp, ui: &mut egui::Ui) {
     }
 }
 
-fn qc_tab(app: &mut EffectcraftApp, ui: &mut egui::Ui) {
+fn qc_tab(app: &mut EffectcraftApp, ui: &mut egui::Ui, alerts: &[PanelAlert]) {
     ui.label("Pre-render size check. Normal duplicated deliverables (Al Salam 3072×576, Palm Trees 960×960) pass. Extra-stacked sizes fail.");
     if auto_btn(app, ui, "screenSuite.matcher.check", "Check sizes") {
         exec(app, "screen.matcher.check", json!({}));
@@ -252,11 +344,11 @@ fn qc_tab(app: &mut EffectcraftApp, ui: &mut egui::Ui) {
     let color = if report.pass { app.tokens.cache_green } else { app.tokens.danger };
     ui.colored_label(color, RichText::new(&report.summary).strong());
     for row in &report.rows {
-        let c = match row.status.as_str() {
-            "pass" => app.tokens.text,
-            "flag" => app.tokens.warning,
-            _ => app.tokens.danger,
-        };
-        ui.colored_label(c, format!("{}  {}  {}", row.screen, row.status, row.detail));
+        let line = format!("{}  {}  {}", row.screen, row.status, row.detail);
+        if let Some(a) = alert_for(alerts, "qc", &row.screen) {
+            paint_alert_row(app, ui, a, &line);
+        } else {
+            ui.label(line);
+        }
     }
 }

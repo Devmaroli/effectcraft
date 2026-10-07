@@ -703,7 +703,7 @@ pub fn frontend(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str, p: Valu
             // Render finished with Notify on: a toast, the dock/taskbar attention request, and the
             // host's system sound (the desktop app handles `renderQueue.notify`).
             let msg = p.get("message").and_then(Value::as_str).unwrap_or("Render finished").to_string();
-            app.toast = Some((msg, now));
+            app.toast = Some((msg, now, false));
             ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(egui::UserAttentionType::Informational));
             if let Some(f) = app.hooks.app_action.as_ref() {
                 f("renderQueue.notify");

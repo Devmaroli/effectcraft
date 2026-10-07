@@ -12,8 +12,8 @@ use effectcraft_screens::manager::JobMode;
 use effectcraft_screens::normalize::normalize;
 use effectcraft_screens::sorter::{MatchMode, SorterFilters, apply_flag_answers};
 use effectcraft_screens::{
-    CompProbe, Library, ManagerSelection, MatchReport, SorterResult, accepted_sizes_for, active_combiners, check_comps, parse_tag_text, select_pasted,
-    sort_lines,
+    CompProbe, Library, ManagerSelection, MatchReport, SorterResult, accepted_sizes_for, active_combiners, check_comps, collect_alerts, parse_tag_text,
+    select_pasted, sort_lines,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -85,6 +85,16 @@ impl Default for ScreenSuiteState {
 fn set_tab(s: &mut Session, tab: &str) {
     s.state.screen.tab = tab.to_string();
     s.events.push(Event::Frontend { command: "window.panel".into(), params: json!({"panel": "screenSuite"}) });
+}
+
+/// In-app only: a toast plus opening Screen Suite. Nothing is emailed or sent outside EffectCraft.
+fn notice_in_app(s: &mut Session, message: String) {
+    s.events.push(Event::Toast { message, error: true });
+    s.events.push(Event::Frontend { command: "window.panel".into(), params: json!({"panel": "screenSuite"}) });
+}
+
+fn current_alerts(s: &Session) -> Vec<effectcraft_screens::PanelAlert> {
+    collect_alerts(&s.state.screen.sorter, &s.state.screen.manager, &s.state.screen.matcher)
 }
 
 fn library_json(s: &mut Session, _: &Value) -> Result<Value> {
@@ -160,6 +170,10 @@ fn sorter_sort(s: &mut Session, p: &Value) -> Result<Value> {
     } else {
         s.state.screen.sorter = result;
     }
+    let n = s.state.screen.sorter.flags.iter().filter(|f| !f.answered).count();
+    if n > 0 {
+        notice_in_app(s, format!("Look out — {n} booking flag(s). See Screen Suite ▸ Booking."));
+    }
     serde_json::to_value(&s.state.screen.sorter).map_err(|e| EngineError::Other(e.to_string()))
 }
 
@@ -177,6 +191,10 @@ fn sorter_send(s: &mut Session, p: &Value) -> Result<Value> {
     s.state.screen.manager = select_pasted(library(), &names, s.state.screen.job_mode);
     s.state.screen.manager.show_selected_only = true;
     set_tab(s, "build");
+    let n = s.state.screen.manager.matches.iter().filter(|m| m.status != "ok").count();
+    if n > 0 {
+        notice_in_app(s, format!("Look out — {n} screen(s) did not match. See Screen Suite ▸ Build."));
+    }
     serde_json::to_value(&s.state.screen.manager).map_err(|e| EngineError::Other(e.to_string()))
 }
 
@@ -197,6 +215,10 @@ fn manager_select(s: &mut Session, p: &Value) -> Result<Value> {
         s.state.screen.manager.show_selected_only = v;
     } else {
         s.state.screen.manager.show_selected_only = true;
+    }
+    let n = s.state.screen.manager.matches.iter().filter(|m| m.status != "ok").count();
+    if n > 0 {
+        notice_in_app(s, format!("Look out — {n} screen(s) did not match. See Screen Suite ▸ Build."));
     }
     serde_json::to_value(&s.state.screen.manager).map_err(|e| EngineError::Other(e.to_string()))
 }
@@ -327,9 +349,6 @@ fn combine_active(s: &mut Session, p: &Value) -> Result<Value> {
                 }),
             )?;
         }
-        for w in &lay.warnings {
-            s.events.push(Event::Toast { message: w.message(), error: true });
-        }
         warnings.extend(lay.warnings.clone());
         out.push(json!({
             "name": c.name,
@@ -343,6 +362,9 @@ fn combine_active(s: &mut Session, p: &Value) -> Result<Value> {
     }
     s.state.screen.manager.combiners = active_combiners(lib, &selected);
     s.state.screen.manager.warnings = warnings;
+    if let Some(w) = s.state.screen.manager.warnings.first() {
+        notice_in_app(s, w.message());
+    }
     Ok(json!(out))
 }
 
@@ -394,10 +416,9 @@ fn matcher_check(s: &mut Session, p: &Value) -> Result<Value> {
     let report = check_comps(lib, &required, &comps, mode);
     s.state.screen.matcher = report.clone();
     s.state.screen.tab = "qc".into();
-    if !report.oversized.is_empty() {
-        for m in &report.oversized {
-            s.events.push(Event::Toast { message: m.clone(), error: true });
-        }
+    s.events.push(Event::Frontend { command: "window.panel".into(), params: json!({"panel": "screenSuite"}) });
+    if !report.pass {
+        notice_in_app(s, report.summary.clone());
     }
     serde_json::to_value(&s.state.screen.matcher).map_err(|e| EngineError::Other(e.to_string()))
 }
@@ -413,7 +434,15 @@ fn suite_tab(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn suite_state(s: &mut Session, _: &Value) -> Result<Value> {
-    serde_json::to_value(&s.state.screen).map_err(|e| EngineError::Other(e.to_string()))
+    let mut v = serde_json::to_value(&s.state.screen).map_err(|e| EngineError::Other(e.to_string()))?;
+    if let Some(obj) = v.as_object_mut() {
+        obj.insert("alerts".into(), serde_json::to_value(current_alerts(s)).map_err(|e| EngineError::Other(e.to_string()))?);
+    }
+    Ok(v)
+}
+
+fn suite_alerts(s: &mut Session, _: &Value) -> Result<Value> {
+    serde_json::to_value(current_alerts(s)).map_err(|e| EngineError::Other(e.to_string()))
 }
 
 fn adapter_parse(s: &mut Session, p: &Value) -> Result<Value> {
@@ -533,6 +562,7 @@ pub fn specs() -> Vec<CommandSpec> {
         query!("screen.matcher.accepted", "Accepted sizes for a screen", "{name}", accepted),
         cmd!("screen.suite.tab", "Screen Suite Tab", [], None, "{tab: booking|build|adapter|deliver|qc}", always, suite_tab),
         query!("screen.suite.state", "Screen Suite state", "{}", suite_state),
+        query!("screen.suite.alerts", "In-app Screen Suite alerts (banner + highlighted rows)", "{}", suite_alerts),
         cmd!("screen.adapter.parse", "Parse Adapter Tag", ["Composition", "Screen Suite"], None, "{text?}", always, adapter_parse),
         cmd!("screen.adapter.apply", "Apply Adapter Tag", ["Composition", "Screen Suite"], None, "{text?}", always, adapter_apply),
         cmd!("screen.freeze", "Freeze Frame (Screen Suite)", ["Composition", "Screen Suite"], None, "{layers?}", always, freeze),
@@ -634,6 +664,11 @@ mod tests {
         let check = s2.execute("screen.matcher.check", json!({"names": ["Al Salam Sync"]})).unwrap();
         assert!(!check["pass"].as_bool().unwrap(), "{check}");
         assert!(!check["oversized"].as_array().unwrap().is_empty());
+        let alerts = s2.execute("screen.suite.alerts", json!({})).unwrap();
+        assert!(alerts.as_array().unwrap().iter().any(|a| a["kind"] == "extraStack" || a["kind"] == "sizeMismatch"), "{alerts}");
+        let st = s2.execute("screen.suite.state", json!({})).unwrap();
+        assert!(st["alerts"].as_array().unwrap().iter().any(|a| a["tab"] == "qc" || a["tab"] == "build"), "{st}");
+        assert!(s2.drain_events().iter().any(|e| matches!(e, Event::Toast { error: true, .. })));
     }
 
     #[test]

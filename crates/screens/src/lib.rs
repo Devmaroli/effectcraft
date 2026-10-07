@@ -5,6 +5,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod adapter;
+pub mod alerts;
 pub mod combiner;
 pub mod fuzzy;
 pub mod inventory;
@@ -14,6 +15,7 @@ pub mod normalize;
 pub mod sorter;
 
 pub use adapter::{LayerTag, format_tag, parse_tag_text};
+pub use alerts::{AlertLevel, PanelAlert, collect_alerts, tab_alert_count};
 pub use combiner::{AcceptedSize, CombinerLayout, DupWarning, FacePlacement, accepted_sizes_for, active_combiners, extra_stacked, unique_source_slots};
 pub use fuzzy::{SCREEN_SPECIFIC_NAME_MIN, names_match_90, similarity, token_score};
 pub use inventory::{Library, STUDIO_FPS, Screen, duration_for, is_palm_trees, size_mode_alias};
@@ -131,6 +133,9 @@ mod tests {
         assert!(!report.oversized.is_empty(), "{report:?}");
         assert!(report.rows.iter().any(|r| r.status == "sizeMismatch"));
         assert!(report.oversized.iter().any(|m| m.contains("3072×576") && m.contains("3072×1152") && m.contains("extra")));
+        let alerts = collect_alerts(&SorterResult::default(), &ManagerSelection { warnings: lay.warnings.clone(), ..ManagerSelection::default() }, &report);
+        assert!(alerts.iter().any(|a| a.kind == "extraStack" && a.level == crate::alerts::AlertLevel::Error));
+        assert!(alerts.iter().any(|a| a.tab == "qc" && a.kind == "sizeMismatch"));
         for c in &lib.combiners {
             let normal = CombinerLayout::from_combiner(c);
             assert!(normal.warnings.is_empty(), "{} configured layout must not warn", c.name);
@@ -195,6 +200,9 @@ mod tests {
         assert!(report.rows.iter().any(|r| r.screen.contains("Al Salam") && r.status == "sizeMismatch"));
         assert!(report.rows.iter().any(|r| r.status == "missing"));
         assert!(report.summary.contains("Not ready"));
+        let alerts = collect_alerts(&SorterResult::default(), &select_pasted(&lib, &["Top Gear".into()], JobMode::ScreenSpecific), &report);
+        assert!(alerts.iter().any(|a| a.kind == "missing" || a.kind == "sizeMismatch"));
+        assert!(alerts.iter().any(|a| a.tab == "qc"));
     }
 
     #[test]

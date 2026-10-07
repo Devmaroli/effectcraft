@@ -208,6 +208,8 @@ fn screen_suite_booking_build_and_extra_stack_warning() {
     assert!(h.state().auto.find("screenSuite.tab.booking").is_some());
     assert!(h.state().auto.find("screenSuite.paste").is_some());
     assert!(h.state().auto.find("screenSuite.sort").is_some());
+    assert!(h.state().auto.find("screenSuite.alert.banner").is_some(), "unmatched booking flags must show an in-app banner");
+    assert!(h.state().auto.find("screenSuite.tab.booking.badge").is_some() || h.state().session.state.screen.sorter.flags.is_empty());
 
     h.state_mut().session.execute("screen.sorter.send", json!({"screenSpecific": false})).unwrap();
     h.run_steps(4);
@@ -226,4 +228,10 @@ fn screen_suite_booking_build_and_extra_stack_warning() {
     assert!(!h.state().session.state.screen.matcher.oversized.is_empty());
     assert_eq!(h.state().session.state.screen.tab, "qc");
     assert!(h.state().auto.find("screenSuite.matcher.check").is_some());
+    assert!(h.state().auto.find("screenSuite.alert.banner").is_some(), "extra-stack and Size Matcher flags must stay as an in-app banner");
+    assert!(h.state().auto.find("screenSuite.tab.qc.badge").is_some() || h.state().auto.find("screenSuite.tab.build.badge").is_some());
+    assert!(
+        h.state().auto.previous.iter().chain(h.state().auto.elements.iter()).any(|e| e.id.starts_with("screenSuite.alert.row.")),
+        "affected rows must be highlighted"
+    );
 }
