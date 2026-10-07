@@ -1235,6 +1235,7 @@ dependencies = [
  "effectcraft-text",
  "effectcraft-time",
  "effectcraft-track",
+ "encodecraft-job",
  "exr",
  "image",
  "kurbo",
@@ -1796,6 +1797,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52c8d4141cf0f60fb2f7aefaf352d3ffa5171ef0ab09731c64391801e95e48f1"
 dependencies = [
  "bytemuck",
+]
+
+[[package]]
+name = "encodecraft-job"
+version = "0.4.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

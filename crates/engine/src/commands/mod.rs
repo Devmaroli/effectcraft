@@ -16,6 +16,7 @@ pub mod content_fill;
 mod create;
 mod edit;
 mod effect;
+mod encodecraft;
 pub mod essential;
 pub mod expr_tools;
 mod file;
@@ -156,6 +157,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(effect::specs());
         v.extend(time::specs());
         v.extend(render_queue::specs());
+        v.extend(encodecraft::specs());
         v.extend(help::specs());
         v.extend(query::specs());
         v.extend(batch::specs());

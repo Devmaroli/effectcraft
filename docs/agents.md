@@ -158,6 +158,14 @@ build real projects through these interfaces; they are worked examples of everyt
   proresProfile: 4444, output}` then `renderQueue.render {"wait": true}`. Check a render by
   importing it (`file.import`, `file.newCompFromSelection`) and `render_frame {transparent: true}`
   for its alpha (ProRes 4444 and WebM VP9 alpha both read back as straight alpha).
+* **EncodeCraft** (Media Encoder-style queue, this fork): save the project, then
+  `encodecraft.queue {comp?}`. EffectCraft POSTs the saved path and composition name to
+  `http://127.0.0.1:9878/v1/enqueue` (loopback IPv4 only, never DNS; HTTPS/IPv6/`..`/CRLF
+  rejected). If EncodeCraft is not running it writes the same JSON to EncodeCraft's inbox
+  (`ENCODECRAFT_INBOX` or the platform config dir; absolute, no `..`) and tries to open the
+  app from an absolute existing path (same folder as `effectcraft`, a well-known install
+  location, or `ENCODECRAFT_BIN` — never `PATH`). Unsaved or dirty projects fail with a
+  save-first error. EncodeCraft renders through `effectcraft-cli`.
 * **Essential Graphics**: controls can be addressed by name (`essential.set {"layer":"#1",
   "control":"Title","value":"John Smith"}`); a command that targets an explicit `comp` runs even
   when the active comp would disable it (`essential.exportTemplate {"comp":"Lower Third", …}`).

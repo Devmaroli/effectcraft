@@ -18,10 +18,11 @@
 //! ```
 //!
 //! An entry's shortcut is the command's default shortcut unless the line gives one (needed for
-//! entries with bound parameters). Adobe-service entries (Team Projects, Libraries, Bridge, Media
-//! Encoder, Behance, Creative Cloud…) are intentionally absent; the Essential Graphics workspace
-//! uses the Properties panel and the Essential Graphics panel, whose templates use EffectCraft's
-//! own open `.ectemplate` format.
+//! entries with bound parameters). Adobe-service entries (Team Projects, Libraries, Bridge,
+//! Behance, Creative Cloud…) are intentionally absent. This fork adds Composition ▸ Add to
+//! EncodeCraft Queue in place of Adobe Media Encoder. The Essential Graphics workspace uses the
+//! Properties panel and the Essential Graphics panel, whose templates use EffectCraft's own open
+//! `.ectemplate` format.
 
 use std::sync::OnceLock;
 
@@ -536,6 +537,7 @@ File
     Clear Recent Footage | file.clearRecentFootage
   Export
     Add to Render Queue | renderQueue.add
+    Add to EncodeCraft Queue | encodecraft.queue
     Adobe Premiere Pro Project... | file.exportTimeline
     Lottie JSON... | file.exportLottie
     Essential Graphics Template... | essential.exportTemplate
@@ -682,6 +684,7 @@ Composition
   Crop Comp to Selected Layer(s) Bounds | comp.cropToLayerBounds
   ---
   Add to Render Queue | renderQueue.add
+  Add to EncodeCraft Queue | encodecraft.queue
   Add Output Module | render.addOutputModule
   ---
   Preview
