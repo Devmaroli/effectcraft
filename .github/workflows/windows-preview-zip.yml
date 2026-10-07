@@ -1,0 +1,74 @@
+# Private Windows x64 portable zip for the preview-playback branch: a draft GitHub Release
+# (not listed publicly) with SHA-256. Not the signed installer pipeline on `release`.
+name: Windows preview zip
+
+on:
+  push:
+    branches: [cursor/preview-playback-gpu-6944]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-preview-zip-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  windows-x64-zip:
+    name: Windows x64 portable zip
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: preview-playback-windows-x64
+      - name: Build portable binaries
+        env:
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
+        run: cargo build --release --locked -p effectcraft -p effectcraft-cli --target x86_64-pc-windows-msvc
+      - name: Pack zip and SHA-256
+        shell: pwsh
+        run: |
+          $sha = git rev-parse --short HEAD
+          $name = "effectcraft-preview-playback-windows-x64"
+          $stage = Join-Path $env:RUNNER_TEMP $name
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item target\x86_64-pc-windows-msvc\release\effectcraft.exe $stage
+          Copy-Item target\x86_64-pc-windows-msvc\release\effectcraft-cli.exe $stage
+          Copy-Item LICENSE-MIT, LICENSE-APACHE, README.md $stage -ErrorAction SilentlyContinue
+          $zip = Join-Path $env:RUNNER_TEMP "$name.zip"
+          if (Test-Path $zip) { Remove-Item $zip }
+          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip
+          $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
+          Set-Content -Path "$zip.sha256" -Value "$hash  $name.zip" -NoNewline
+          Write-Output "SHA256=$hash" >> $env:GITHUB_ENV
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item $zip, "$zip.sha256" dist\
+          Get-Content "$zip.sha256"
+      - name: Draft GitHub release (private until published)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: preview-playback-${{ github.sha }}
+          name: Preview playback (Windows x64) ${{ github.sha }}
+          draft: true
+          prerelease: true
+          make_latest: false
+          files: |
+            dist/effectcraft-preview-playback-windows-x64.zip
+            dist/effectcraft-preview-playback-windows-x64.zip.sha256
+          body: |
+            Private draft build of preview-playback improvements (RAM preview, parallel 2D compositing, GPU toggle, DOOH bench).
+
+            Not a published EffectCraft release. SHA-256 is in the `.sha256` asset.
+
+            ```
+            cargo run --release -p effectcraft-cli -- bench --dooh --play 25 --gpu
+            ```
