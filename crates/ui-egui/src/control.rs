@@ -276,6 +276,21 @@ pub fn handle(app: &mut EffectcraftApp, ctx: &egui::Context, req: &ControlReques
             {
                 app.ui.project_col_widths = m;
             }
+            if let Some(v) = s("projectView") {
+                app.ui.project_view = match v {
+                    "grid" => crate::state::ProjectView::Grid,
+                    _ => crate::state::ProjectView::List,
+                };
+            }
+            if let Some(v) = p.get("projectGridFolder") {
+                app.ui.project_grid_folder = v.as_u64();
+            }
+            if let Some(v) = p.get("projectThumbSize").and_then(Value::as_f64) {
+                app.ui.project_thumb_size = (v as f32).clamp(64.0, 200.0);
+            }
+            if let Some(Value::Array(a)) = p.get("projectOpenFolders") {
+                app.ui.project_open_folders = a.iter().filter_map(Value::as_u64).collect();
+            }
             // Wiggler / Smoother / Motion Sketch settings (fields of `AnimToolsState`).
             if let Some(Value::Object(m)) = p.get("animTools") {
                 let mut cur = serde_json::to_value(&app.ui.anim_tools).unwrap_or_default();
