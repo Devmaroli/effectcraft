@@ -1058,14 +1058,26 @@ pub struct FontRow {
 /// the font menu's preview (Settings ▸ Type ▸ Show Font Preview).
 pub fn font_preview_text(family: &str, size: f64, sample: &str) -> Vec<Vec<[f32; 2]>> {
     use kurbo::PathEl;
-    let st = effectcraft_keyframe::text_doc::CharStyle { font: family.to_string(), size, ..Default::default() };
+    let rtl = effectcraft_text::arabic::first_strong_rtl(sample) == Some(true);
+    let doc = effectcraft_keyframe::TextDoc {
+        text: sample.into(),
+        font: family.to_string(),
+        size,
+        direction: if rtl { effectcraft_keyframe::Direction::Rtl } else { effectcraft_keyframe::Direction::Ltr },
+        justify: if rtl { effectcraft_keyframe::Justify::Right } else { effectcraft_keyframe::Justify::Left },
+        ..Default::default()
+    };
+    let lay = effectcraft_text::layout_doc(&doc);
+    let origin_x = lay.glyphs.iter().map(|g| g.origin.x).fold(f64::INFINITY, f64::min);
+    let dx = if origin_x.is_finite() { origin_x } else { 0.0 };
     let mut out = vec![];
-    let mut x = 0.0;
-    for ch in sample.chars() {
-        let (path, adv) = effectcraft_text::char_glyph_style(&st, ch);
+    for g in &lay.glyphs {
+        if g.is_space {
+            continue;
+        }
         let mut cur: Vec<[f32; 2]> = vec![];
-        let pt = |p: kurbo::Point| [(p.x + x) as f32, p.y as f32];
-        kurbo::flatten(&path, 0.2, |el| match el {
+        let pt = |p: kurbo::Point| [(p.x + g.origin.x - dx) as f32, (p.y + g.origin.y) as f32];
+        kurbo::flatten(&g.path, 0.2, |el| match el {
             PathEl::MoveTo(p) => {
                 if cur.len() > 1 {
                     out.push(std::mem::take(&mut cur));
@@ -1086,7 +1098,6 @@ pub fn font_preview_text(family: &str, size: f64, sample: &str) -> Vec<Vec<[f32;
         if cur.len() > 1 {
             out.push(cur);
         }
-        x += adv;
     }
     out
 }

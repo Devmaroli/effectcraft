@@ -35,7 +35,7 @@ const PANEL_JA: &[(&str, &str)] = &[
     ("Auto", "自動"),
     ("Auto: first strong letter sets the direction.", "自動: 最初の強い文字で方向を決めます。"),
     ("Roman Hanging Punctuation", "欧文ぶら下げ"),
-    ("Stretch with kashida (ـ)", "カシダで揃える (ـ)"),
+    ("Stretch with kashida (tatweel)", "カシダで揃える (tatweel)"),
     ("All", "すべて"),
     ("Arabic", "アラビア語"),
     ("No Arabic · uses fallback", "アラビア語なし · フォールバック"),

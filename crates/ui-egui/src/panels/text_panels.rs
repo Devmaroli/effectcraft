@@ -586,7 +586,7 @@ fn paragraph_body(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
             actions.push(json!({"kashidaJustify": !doc.kashida_justify}));
         }
         app.auto.add("paragraph.kashidaJustify", kr, "Stretch with kashida");
-        p.text(pos2(x0 + 20.0, y + 7.0), Align2::LEFT_CENTER, crate::i18n::panel(app, "Stretch with kashida (ـ)"), Tokens::ui(11.5), t.text_dim);
+        p.text(pos2(x0 + 20.0, y + 7.0), Align2::LEFT_CENTER, crate::i18n::panel(app, "Stretch with kashida (tatweel)"), Tokens::ui(11.5), t.text_dim);
         new_chip(&p, pos2(x0 + w - 32.0, y), &t, crate::i18n::panel(app, "NEW"));
         y += 26.0;
     }

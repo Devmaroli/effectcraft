@@ -634,6 +634,8 @@ mod tests {
         let pct = l.glyphs.iter().find(|g| g.ch == '%').unwrap();
         assert!(five.origin.x < zero.origin.x, "5 before 0");
         assert!(zero.origin.x < pct.origin.x, "0 before % — not %50");
+        let o = l.glyphs.iter().find(|g| g.ch == 'O').expect("O");
+        assert!(five.origin.x < o.origin.x, "50% left of OFF, not after everything");
     }
 
     #[test]

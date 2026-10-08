@@ -141,6 +141,32 @@ pub fn pin_western_numerals_ltr(text: &str, levels: &mut [unicode_bidi::Level]) 
             set_level(levels, b, c, lv);
         }
     }
+    // A Latin word next to Western digits ("50% OFF", "The Avenues 2026") must share the
+    // letter's even embedding level. Otherwise EN in an RTL paragraph sits on the RTL side of
+    // the L run and the line reads "OFF everything 50%".
+    let latinish =
+        |c: char| c.is_ascii_alphabetic() || c.is_ascii_digit() || matches!(c, '%' | '$' | '€' | '+' | '#' | '.' | ',' | ':' | '/' | ' ' | '\'' | '-');
+    let mut i = 0;
+    while i < chars.len() {
+        if !latinish(chars[i].1) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < chars.len() && latinish(chars[i].1) {
+            i += 1;
+        }
+        let run = chars.get(start..i).unwrap_or(&[]);
+        let Some((_, letter_lv)) = run.iter().find(|(_, c)| c.is_ascii_alphabetic()).and_then(|(b, _)| level_at(levels, *b).map(|lv| (b, lv))) else {
+            continue;
+        };
+        if letter_lv.is_rtl() {
+            continue;
+        }
+        for &(b, c) in run {
+            set_level(levels, b, c, letter_lv);
+        }
+    }
 }
 
 pub fn to_western_digit(c: char) -> char {
@@ -223,6 +249,8 @@ mod tests {
         let kh = s.find('خ').expect("kh");
         assert!(off < kh, "visual: OFF left of خصم: {s:?}");
         assert!(s.contains("50%"), "50% stays 50% not %50: {s:?}");
+        let fifty = s.find("50%").expect("50%");
+        assert!(fifty < off, "visual: 50% left of OFF, not OFF everything 50%: {s:?}");
     }
 
     #[test]
