@@ -334,3 +334,117 @@ fn screen_suite_v2_snapshots() {
     h.run_steps(4);
     h.render().expect("render").save(format!("{dir}/v2-library1-editor.png")).unwrap();
 }
+
+#[test]
+fn screen_manager_apply_places_source_through_the_gui() {
+    let mut s = Session::default();
+    s.execute("comp.new", json!({"name": "Honor_400_EN.mp4", "width": 1920, "height": 1080, "duration": 8, "frameRate": 25.0})).unwrap();
+    s.execute("layer.newSolid", json!({"name": "Artwork", "color": "#e23d28", "width": 1920, "height": 1080})).unwrap();
+    let src = s.active_comp_id().expect("source");
+    s.state.project_selection = vec![src];
+    s.execute("screen.manager.select", json!({"names": ["Al Salam Sync", "Piccadilly"], "jobMode": "bySize"})).unwrap();
+    let mut h = Harness::builder().with_size(egui::vec2(1680.0, 1020.0)).build_eframe(|_| EffectcraftApp::new(s));
+    h.run_steps(3);
+    open(&mut h, "screenSuite");
+    h.state_mut().ui.maximized = Some(PanelKind::ScreenSuite);
+    h.state_mut().session.execute("screen.suite.tab", json!({"tab": "build"})).unwrap();
+    h.run_steps(4);
+    let src_el = h.state().auto.find("screenSuite.source").expect("Source: line in Screen Manager");
+    assert!(src_el.label.contains("Honor_400_EN"), "{}", src_el.label);
+    let dir = "/cursor/stores/self/arabic-text";
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::create_dir_all("/opt/cursor/artifacts/arabic-text").unwrap();
+    h.render().expect("render").save(format!("{dir}/screen-manager-source-line.png")).unwrap();
+    std::fs::copy(format!("{dir}/screen-manager-source-line.png"), "/opt/cursor/artifacts/arabic-text/screen-manager-source-line.png").unwrap();
+    click(&mut h, "screenSuite.apply");
+    h.run_steps(8);
+    let src = h.state().session.active_comp_id().or_else(|| h.state().session.state.project_selection.first().copied());
+    let src = src.expect("source still present");
+    let created: Vec<_> =
+        h.state().session.project.items.values().filter(|i| i.id != src && i.as_comp().is_some_and(|c| c.width != 1920 || c.height != 1080)).cloned().collect();
+    assert!(created.len() >= 2, "expected screen comps, got {}", created.len());
+    let mut faces = 0;
+    for item in &created {
+        let Some(c) = item.as_comp() else { continue };
+        let face = matches!((c.width, c.height), (1536, 576) | (2027, 720));
+        if !face {
+            assert!(!c.layers.is_empty(), "combiner {} was created empty", item.name);
+            continue;
+        }
+        faces += 1;
+        assert!(!c.layers.is_empty(), "{} was created empty", item.name);
+        let refs_src = c.layers.iter().any(|l| match l.source {
+            effectcraft_project::LayerSource::Comp { item } | effectcraft_project::LayerSource::Footage { item } => item == src,
+            _ => false,
+        });
+        assert!(refs_src, "{} has no layer referencing the source", item.name);
+        assert!((c.frame_rate.as_f64() - 25.0).abs() < 0.01);
+    }
+    assert!(faces >= 2, "expected Al Salam + Piccadilly face comps, got {faces}");
+}
+
+#[test]
+fn screen_manager_apply_disabled_without_source() {
+    let mut s = Session::default();
+    s.execute("screen.manager.select", json!({"names": ["Piccadilly"], "jobMode": "bySize"})).unwrap();
+    let mut h = Harness::builder().with_size(egui::vec2(1280.0, 800.0)).build_eframe(|_| EffectcraftApp::new(s));
+    h.run_steps(3);
+    open(&mut h, "screenSuite");
+    h.state_mut().ui.maximized = Some(PanelKind::ScreenSuite);
+    h.state_mut().session.execute("screen.suite.tab", json!({"tab": "build"})).unwrap();
+    h.run_steps(4);
+    assert!(h.state().auto.find("screenSuite.source.missing").is_some());
+    assert!(h.state().auto.find("screenSuite.apply").is_some());
+    let n = h.state().session.project.items.len();
+    click(&mut h, "screenSuite.apply");
+    h.run_steps(4);
+    assert_eq!(h.state().session.project.items.len(), n, "disabled Apply must not create empty comps");
+    let dir = "/cursor/stores/self/arabic-text";
+    std::fs::create_dir_all(dir).unwrap();
+    h.render().expect("render").save(format!("{dir}/screen-manager-no-source.png")).unwrap();
+    std::fs::copy(format!("{dir}/screen-manager-no-source.png"), "/opt/cursor/artifacts/arabic-text/screen-manager-no-source.png").unwrap();
+}
+
+#[test]
+fn window_menu_fits_1080p_and_screen_suite_is_near_the_top() {
+    let mut h = Harness::builder().with_size(egui::vec2(1920.0, 1080.0)).build_eframe(|_| {
+        let mut s = Session::default();
+        s.execute("comp.new", json!({"name": "Menu", "width": 320, "height": 180, "duration": 2})).unwrap();
+        EffectcraftApp::new(s)
+    });
+    h.run_steps(4);
+    click(&mut h, "menu.Window");
+    h.run_steps(4);
+    let suite = h.state().auto.find("menu.window.screenSuite").expect("Screen Suite in the open Window menu").clone();
+    let lib = h.state().auto.find("menu.window.screenLibrary").expect("Screen Library in the open Window menu").clone();
+    let popup = h.state().auto.find("menu.Window.popup").expect("Window menu popup").clone();
+    let popup_bottom = popup.rect[1] + popup.rect[3];
+    assert!(popup_bottom <= 1080.0 + 1.0, "Window menu popup clipped at y={popup_bottom}");
+    assert!(popup.rect[3] > 500.0, "Window menu should use available 1080p height, got h={}", popup.rect[3]);
+    let suite_bottom = suite.rect[1] + suite.rect[3];
+    let lib_bottom = lib.rect[1] + lib.rect[3];
+    assert!(suite_bottom <= 1080.0, "Screen Suite clipped at y={suite_bottom}");
+    assert!(lib_bottom <= 1080.0, "Screen Library clipped at y={lib_bottom}");
+    assert!(suite.rect[1] < 1080.0 * 0.20, "Screen Suite y={} is not in the top 20% of 1080p", suite.rect[1]);
+    assert!(lib.rect[1] < 1080.0 * 0.20, "Screen Library y={} is not in the top 20% of 1080p", lib.rect[1]);
+    let mut rows: Vec<_> = h
+        .state()
+        .auto
+        .previous
+        .iter()
+        .chain(h.state().auto.elements.iter())
+        .filter(|e| e.id.starts_with("menu.window.") || e.id.starts_with("menu.submenu."))
+        .map(|e| (e.id.clone(), e.rect[1]))
+        .collect();
+    rows.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+    rows.dedup_by(|a, b| a.0 == b.0);
+    let n = rows.len().max(1);
+    let suite_i = rows.iter().position(|(id, _)| id == "menu.window.screenSuite").expect("Screen Suite in row list");
+    let lib_i = rows.iter().position(|(id, _)| id == "menu.window.screenLibrary").expect("Screen Library in row list");
+    assert!(suite_i * 5 < n, "Screen Suite index {suite_i} of {n} is not < 20%: {rows:?}");
+    assert!(lib_i * 5 < n, "Screen Library index {lib_i} of {n} is not < 20%: {rows:?}");
+    assert!(h.state().auto.find("menu.window.renderQueue").is_some(), "Render Queue must still be in the Window menu");
+    let dir = std::env::var("WINDOW_MENU_SNAP").unwrap_or_else(|_| "/opt/cursor/artifacts/screenshots".into());
+    std::fs::create_dir_all(&dir).unwrap();
+    h.render().expect("render").save(format!("{dir}/window-menu-1080p.png")).unwrap();
+}

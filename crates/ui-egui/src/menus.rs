@@ -837,7 +837,13 @@ pub fn frontend(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str, p: Valu
             app.show_panel(panel);
             if p.get("float").and_then(Value::as_bool).unwrap_or(false) {
                 let screen = ctx.content_rect();
-                let rect = if panel == PanelKind::ScreenLibrary {
+                let num = |arr: &[serde_json::Value], i: usize| arr.get(i).and_then(Value::as_f64).map(|v| v as f32);
+                let rect = if let Some(arr) = p.get("rect").and_then(Value::as_array) {
+                    match (num(arr, 0), num(arr, 1), num(arr, 2), num(arr, 3)) {
+                        (Some(x), Some(y), Some(w), Some(h)) => [x, y, w, h],
+                        _ => crate::dock_ui::default_float_rect(screen),
+                    }
+                } else if panel == PanelKind::ScreenLibrary {
                     let c = screen.center();
                     [c.x - 620.0, c.y - 380.0, 1240.0, 760.0]
                 } else {
@@ -1489,7 +1495,21 @@ pub fn menu_bar(app: &mut EffectcraftApp, ui: &mut egui::Ui) {
                 if let MenuNode::Submenu { label, children } = node {
                     let r = ui.menu_button(crate::i18n::label(app, "", label), |ui| {
                         ui.set_min_width(if label == "Effect" { 200.0 } else { 280.0 });
-                        menu_nodes(app, ui, children, &mut clicked);
+                        // Long menus (Window, Effect) must use the screen height rather than
+                        // egui's ~400pt popup default, then scroll instead of clipping off a
+                        // 1080p display. Short menus still shrink to their content.
+                        let max_h = (ui.ctx().content_rect().height() - 48.0).max(120.0);
+                        let long = children.len() > 16;
+                        let out = if long {
+                            egui::ScrollArea::vertical()
+                                .max_height(max_h)
+                                .min_scrolled_height(max_h)
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| menu_nodes(app, ui, children, &mut clicked))
+                        } else {
+                            egui::ScrollArea::vertical().max_height(max_h).auto_shrink([false, true]).show(ui, |ui| menu_nodes(app, ui, children, &mut clicked))
+                        };
+                        app.auto.add(&format!("menu.{label}.popup"), out.inner_rect, label);
                     });
                     app.auto.add(&format!("menu.{label}"), r.response.rect, label);
                 }
@@ -1542,7 +1562,7 @@ fn menu_nodes(app: &mut EffectcraftApp, ui: &mut egui::Ui, nodes: &[MenuNode], c
             MenuNode::Submenu { label, children } => {
                 let ws = app.ui.workspace.clone();
                 let shown = crate::i18n::submenu(app, label, effectcraft_engine::menus::submenu_label(&app.session, label, &dyn_ctx(&ws, &[])));
-                ui.menu_button((gutter(false), shown.as_str()), |ui| {
+                let inner = ui.menu_button((gutter(false), shown.as_str()), |ui| {
                     ui.set_min_width(if children.len() > 30 { 200.0 } else { 240.0 });
                     // Long submenus (Blending Mode, effect categories) scroll instead of running
                     // off the screen. Others show whole: egui sizes a new submenu from a default
@@ -1551,6 +1571,7 @@ fn menu_nodes(app: &mut EffectcraftApp, ui: &mut egui::Ui, nodes: &[MenuNode], c
                     let max_h = ui.ctx().content_rect().height() - 40.0;
                     egui::ScrollArea::vertical().max_height(max_h).min_scrolled_height(max_h).show(ui, |ui| menu_nodes(app, ui, children, clicked));
                 });
+                app.auto.add(&format!("menu.submenu.{label}"), inner.response.rect, &shown);
             }
             MenuNode::Item(e) => {
                 if menu_entry(app, ui, e) {
@@ -1573,13 +1594,20 @@ fn gutter(checked: bool) -> egui::Atom<'static> {
     (if checked { "✔" } else { "" }).atom_size(egui::vec2(14.0, 14.0))
 }
 
-fn menu_entry(app: &EffectcraftApp, ui: &mut egui::Ui, e: &MenuEntry) -> bool {
+fn menu_entry(app: &mut EffectcraftApp, ui: &mut egui::Ui, e: &MenuEntry) -> bool {
     let label = entry_label(app, e);
-    let mut b = egui::Button::new((gutter(entry_checked(app, e) == Some(true)), label));
+    let mut b = egui::Button::new((gutter(entry_checked(app, e) == Some(true)), label.as_str()));
     if let Some(s) = entry_shortcut(app, e) {
         b = b.shortcut_text(shortcut_text(&s));
     }
-    ui.add_enabled(entry_enabled(app, e), b).clicked()
+    let r = ui.add_enabled(entry_enabled(app, e), b);
+    app.auto.add(&format!("menu.entry.{}", e.label), r.rect, &e.label);
+    if e.command == "window.panel"
+        && let Some(panel) = e.params.get("panel").and_then(Value::as_str)
+    {
+        app.auto.add(&format!("menu.window.{panel}"), r.rect, &e.label);
+    }
+    r.clicked()
 }
 
 #[cfg(test)]

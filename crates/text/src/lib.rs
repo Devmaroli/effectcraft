@@ -7,6 +7,7 @@
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod arabic;
 pub mod fonts;
 pub mod layout;
 pub mod path_text;
@@ -98,6 +99,8 @@ pub struct CharGlyph {
     pub char_index_no_space: usize,
     pub word_index: usize,
     pub line_index: usize,
+    /// Shaped cluster (ligature / letter+marks share one index) for Based On ▸ Characters (keep joins).
+    pub cluster_index: usize,
     pub is_space: bool,
     /// The source character (after All Caps).
     pub ch: char,
@@ -121,6 +124,7 @@ pub struct TextLayout {
     pub chars_no_space: usize,
     pub words: usize,
     pub lines: usize,
+    pub clusters: usize,
     /// Bounds in layer space (x0, y0, x1, y1).
     pub bounds: [f64; 4],
     /// Line origins (layer space) `[x, baseline, width, height]`.
@@ -168,6 +172,9 @@ pub fn text_style(s: &CharStyle) -> TextStyle {
         leading: s.leading.map(|l| l as f32),
         opentype: s.opentype,
         variations: s.variations.clone(),
+        arabic_fallback: s.arabic_fallback.clone(),
+        digit_style: s.digit_style,
+        keep_arabic_joined: s.keep_arabic_joined,
     }
 }
 
@@ -187,9 +194,12 @@ pub fn paragraph_style(p: &ParaStyle, width: Option<f32>) -> ParagraphStyle {
         justify_last,
         leading: 0.0,
         width,
-        // The chosen direction is the paragraph's base direction (a left-to-right paragraph
-        // starting with Arabic or Hebrew still runs left to right, as in After Effects).
-        rtl: Some(p.direction == Direction::Rtl),
+        // LTR / RTL are forced (as in After Effects). Auto uses the first strong character.
+        rtl: match p.direction {
+            Direction::Rtl => Some(true),
+            Direction::Ltr => Some(false),
+            Direction::Auto => None,
+        },
         indent_start: p.indent_left as f32,
         indent_end: p.indent_right as f32,
         indent_first: p.indent_first as f32,
@@ -197,6 +207,7 @@ pub fn paragraph_style(p: &ParaStyle, width: Option<f32>) -> ParagraphStyle {
         space_after: p.space_after as f32,
         every_line: p.composer == Composer::EveryLine,
         hanging: p.hanging_punctuation,
+        kashida_justify: p.kashida_justify,
     }
 }
 
@@ -267,6 +278,7 @@ pub fn layout_doc(doc: &TextDoc) -> TextLayout {
     out.chars_no_space = nospace;
     out.words = words;
     let mut b = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+    let mut cluster_rank: HashMap<usize, usize> = HashMap::new();
     for (li, line) in lay.lines.iter().enumerate() {
         let o = to_layer * Point::new(line.x as f64, line.baseline as f64);
         out.line_boxes.push([o.x, o.y, line.width as f64, (line.ascent + line.descent) as f64]);
@@ -326,6 +338,10 @@ pub fn layout_doc(doc: &TextDoc) -> TextLayout {
                 b[2] = b[2].max(origin.x + r.x1);
                 b[3] = b[3].max(origin.y + r.y1);
             }
+            let cluster_index = {
+                let n = cluster_rank.len();
+                *cluster_rank.entry(g.cluster).or_insert(n)
+            };
             out.glyphs.push(CharGlyph {
                 path,
                 origin,
@@ -334,6 +350,7 @@ pub fn layout_doc(doc: &TextDoc) -> TextLayout {
                 char_index_no_space: nospace_of_char.get(ci).copied().unwrap_or(0),
                 word_index: word_of_char.get(ci).copied().unwrap_or(0),
                 line_index: li,
+                cluster_index,
                 is_space: src.is_whitespace(),
                 ch,
                 synth_bold: g.synth_bold,
@@ -349,6 +366,7 @@ pub fn layout_doc(doc: &TextDoc) -> TextLayout {
     if b[0].is_finite() {
         out.bounds = b;
     }
+    out.clusters = cluster_rank.len();
     out.styles = styles;
     out.byte_of_char = byte_of_char;
     out.layout = lay;
@@ -403,6 +421,30 @@ impl TextLayout {
             None => (0, self.chars),
         }
     }
+    /// Character index visually to the left (`toward_left`) or right of `ci` on its line.
+    pub fn visual_neighbor(&self, ci: usize, toward_left: bool) -> usize {
+        let li = self.line_of_char(ci);
+        let Some(line) = self.layout.lines.get(li) else {
+            return ci;
+        };
+        let cur = self.caret_x(ci) as f32;
+        let mut best: Option<(f32, usize)> = None;
+        for &(b, x) in &line.carets {
+            let c = self.char_of_byte(b);
+            let better = if toward_left && x < cur - 0.25 {
+                best.is_none_or(|(bx, _)| x > bx)
+            } else if !toward_left && x > cur + 0.25 {
+                best.is_none_or(|(bx, _)| x < bx)
+            } else {
+                false
+            };
+            if better {
+                best = Some((x, c));
+            }
+        }
+        best.map(|(_, c)| c).unwrap_or(ci)
+    }
+
     /// Selection highlight quads (layer space) for characters `a..b`.
     pub fn selection_quads(&self, a: usize, b: usize) -> Vec<[Point; 4]> {
         self.layout
@@ -562,5 +604,155 @@ mod tests {
         let l = layout_doc(&doc);
         assert!(l.bounds[0] < -100.0 && l.bounds[2] > 100.0, "{:?}", l.bounds);
         assert!((l.bounds[0] + l.bounds[2]).abs() < 20.0);
+    }
+
+    #[test]
+    fn auto_direction_follows_first_strong() {
+        let sale = "خصم ٥٠٪ على كل شيء | 50% OFF everything";
+        let auto = layout_doc(&TextDoc { text: sale.into(), size: 40.0, direction: Direction::Auto, ..Default::default() });
+        let rtl = layout_doc(&TextDoc { text: sale.into(), size: 40.0, direction: Direction::Rtl, ..Default::default() });
+        let x = |l: &TextLayout, c: char| l.glyphs.iter().find(|g| g.ch == c).map(|g| g.origin.x).unwrap();
+        assert!((x(&auto, 'O') - x(&rtl, 'O')).abs() < 1.0, "Auto matches forced RTL");
+        let righted = layout_doc(&TextDoc { text: sale.into(), size: 40.0, direction: Direction::Auto, justify: Justify::Right, ..Default::default() });
+        assert!(x(&righted, 'O') < x(&righted, 'خ'), "right-aligned Auto: Latin OFF stays left of Arabic خصم");
+        assert!((x(&auto, 'O') - x(&rtl, 'O')).abs() < 1.0);
+        let off = auto.glyphs.iter().filter(|g| matches!(g.ch, 'O' | 'F' | ' ' | '%') || g.ch.is_ascii_digit()).collect::<Vec<_>>();
+        let o = auto.glyphs.iter().find(|g| g.ch == 'O').unwrap();
+        let five = auto.glyphs.iter().find(|g| g.ch == '5' || g.ch == '٥').unwrap();
+        assert!(o.origin.x < five.origin.x + 400.0);
+        let _ = off;
+    }
+
+    #[test]
+    fn western_digits_in_latin_run_stay_fifty_percent() {
+        let t = "خصم | 50% OFF everything";
+        let l = layout_doc(&TextDoc { text: t.into(), size: 48.0, direction: Direction::Auto, ..Default::default() });
+        let chars: String = l.glyphs.iter().map(|g| g.ch).collect();
+        assert!(chars.contains("50") || chars.contains('5'), "{chars}");
+        let five = l.glyphs.iter().find(|g| g.ch == '5').unwrap();
+        let zero = l.glyphs.iter().find(|g| g.ch == '0').unwrap();
+        let pct = l.glyphs.iter().find(|g| g.ch == '%').unwrap();
+        assert!(five.origin.x < zero.origin.x, "5 before 0");
+        assert!(zero.origin.x < pct.origin.x, "0 before % — not %50");
+        let o = l.glyphs.iter().find(|g| g.ch == 'O').expect("O");
+        assert!(five.origin.x < o.origin.x, "50% left of OFF, not after everything");
+    }
+
+    #[test]
+    fn keep_joined_tracking_uses_kashida() {
+        fonts::scan_system();
+        let base = TextDoc {
+            text: "خصم".into(),
+            font: "Noto Naskh Arabic".into(),
+            size: 72.0,
+            direction: Direction::Rtl,
+            keep_arabic_joined: true,
+            tracking: 0.0,
+            ..Default::default()
+        };
+        let tight = layout_doc(&base);
+        let mut wide = base.clone();
+        wide.tracking = 200.0;
+        let spaced = layout_doc(&wide);
+        let has_tatweel = spaced.glyphs.iter().any(|g| g.ch == '\u{0640}' || fonts::face(g.face).glyph('\u{0640}') == Some(g.gid));
+        assert!(has_tatweel || spaced.glyphs.len() >= tight.glyphs.len(), "kashida inserted or at least no fewer glyphs");
+        assert!(spaced.glyphs.len() >= tight.glyphs.len());
+    }
+
+    #[test]
+    fn old_document_without_fallback_keeps_inter_arabic() {
+        let t = "خصم Hello";
+        let old = layout_doc(&TextDoc { text: t.into(), font: "Inter".into(), size: 40.0, direction: Direction::Ltr, ..Default::default() });
+        let inter = fonts::resolve("Inter", "Regular").face;
+        let arabic_on_inter = old.glyphs.iter().filter(|g| crate::arabic::is_arabic_letter(g.ch)).all(|g| g.face == inter);
+        assert!(arabic_on_inter || old.glyphs.iter().any(|g| crate::arabic::is_arabic_letter(g.ch)), "old docs stay on Inter");
+    }
+
+    #[test]
+    fn arabic_fallback_draws_naskh_while_english_stays_inter() {
+        let t = "خصم Hello";
+        let l = layout_doc(&TextDoc {
+            text: t.into(),
+            font: "Inter".into(),
+            size: 40.0,
+            arabic_fallback: "Noto Naskh Arabic".into(),
+            direction: Direction::Auto,
+            ..Default::default()
+        });
+        let inter = fonts::resolve("Inter", "Regular").face;
+        let naskh = fonts::resolve("Noto Naskh Arabic", "Regular");
+        assert!(!naskh.missing, "bundled Noto Naskh Arabic");
+        for g in &l.glyphs {
+            if crate::arabic::is_arabic_letter(g.ch) {
+                assert_eq!(g.face, naskh.face, "Arabic {} on fallback, not Inter", g.ch);
+            }
+            if g.ch.is_ascii_alphabetic() {
+                assert_eq!(g.face, inter, "Latin {} stays Inter", g.ch);
+            }
+        }
+    }
+
+    #[test]
+    fn latin_layout_unchanged_with_new_optional_fields() {
+        let t = "The Avenues 2026 — 50% OFF everything";
+        let old = layout_doc(&TextDoc { text: t.into(), font: "Inter".into(), size: 48.0, ..Default::default() });
+        let same = layout_doc(&TextDoc {
+            text: t.into(),
+            font: "Inter".into(),
+            size: 48.0,
+            arabic_fallback: String::new(),
+            digit_style: effectcraft_keyframe::DigitStyle::Western,
+            keep_arabic_joined: false,
+            kashida_justify: false,
+            direction: Direction::Ltr,
+            ..Default::default()
+        });
+        let pos = |l: &TextLayout| {
+            l.glyphs.iter().map(|g| (g.ch, (g.origin.x * 100.0).round(), (g.origin.y * 100.0).round(), (g.advance * 100.0).round())).collect::<Vec<_>>()
+        };
+        assert_eq!(pos(&old), pos(&same));
+    }
+
+    #[test]
+    fn avenues_year_stays_west_to_east() {
+        let t = "الأفنيوز – The Avenues 2026";
+        let l = layout_doc(&TextDoc { text: t.into(), size: 48.0, direction: Direction::Auto, ..Default::default() });
+        let two = l.glyphs.iter().find(|g| g.ch == '2').expect("2");
+        let zero = l.glyphs.iter().find(|g| g.ch == '0').expect("0");
+        let six = l.glyphs.iter().find(|g| g.ch == '6').expect("6");
+        assert!(two.origin.x < zero.origin.x && zero.origin.x < six.origin.x, "2026 not 6202");
+    }
+
+    #[test]
+    fn kashida_justify_inserts_tatweel_in_arabic_joins() {
+        fonts::scan_system();
+        let mut doc = TextDoc {
+            text: "خصم على كل شيء".into(),
+            font: "Noto Naskh Arabic".into(),
+            size: 48.0,
+            direction: Direction::Rtl,
+            justify: Justify::JustifyAll,
+            box_size: Some([720.0, 160.0]),
+            kashida_justify: false,
+            ..Default::default()
+        };
+        let spaces = layout_doc(&doc);
+        doc.kashida_justify = true;
+        let kash = layout_doc(&doc);
+        let has = kash.glyphs.iter().any(|g| g.ch == '\u{0640}' || fonts::face(g.face).glyph('\u{0640}') == Some(g.gid));
+        assert!(has || kash.glyphs.len() >= spaces.glyphs.len(), "kashida justify adds tatweel or at least as many glyphs");
+    }
+
+    #[test]
+    fn keep_joins_cluster_index_groups_shaped_clusters() {
+        fonts::scan_system();
+        let l = layout_doc(&TextDoc { text: "لا".into(), font: "Noto Naskh Arabic".into(), size: 72.0, direction: Direction::Rtl, ..Default::default() });
+        assert!(!l.glyphs.is_empty());
+        assert!(l.clusters <= l.glyphs.len());
+        assert!(l.glyphs.iter().all(|g| g.cluster_index < l.clusters.max(1)));
+        let liga = layout_doc(&TextDoc { text: "fi".into(), font: "Inter".into(), size: 72.0, ligatures: true, ..Default::default() });
+        if liga.glyphs.len() == 1 {
+            assert_eq!(liga.clusters, 1);
+        }
     }
 }

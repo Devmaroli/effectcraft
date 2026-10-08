@@ -150,6 +150,60 @@ fn dump_specs() {
 }
 
 #[test]
+fn screen_suite_is_in_the_top_fifth_of_the_window_menu() {
+    let tree = parse(TREE, false).unwrap();
+    let window = tree
+        .iter()
+        .find_map(|n| match n {
+            MenuNode::Submenu { label, children } if label == "Window" => Some(children.as_slice()),
+            _ => None,
+        })
+        .expect("Window menu");
+    let rows: Vec<String> = window
+        .iter()
+        .map(|n| match n {
+            MenuNode::Item(e) => e.label.clone(),
+            MenuNode::Submenu { label, .. } => label.clone(),
+            MenuNode::Dynamic { name } => format!("@{name}"),
+            MenuNode::Separator => "---".into(),
+        })
+        .collect();
+    // First group after workspace/layout items, with a separator below.
+    let after_ws = rows.iter().position(|l| l == "Assign Shortcut to Workspace").expect("workspace shortcuts");
+    assert_eq!(
+        &rows[after_ws + 1..after_ws + 5],
+        ["---", "Screen Suite", "Screen Library", "---"],
+        "Screen Suite/Library must be the first group after Workspace: {rows:?}"
+    );
+    let items: Vec<&str> = window
+        .iter()
+        .filter_map(|n| match n {
+            MenuNode::Item(e) => Some(e.label.as_str()),
+            MenuNode::Submenu { label, .. } => Some(label.as_str()),
+            MenuNode::Dynamic { name } => Some(name.as_str()),
+            MenuNode::Separator => None,
+        })
+        .collect();
+    let n = items.len().max(1);
+    let suite = items.iter().position(|l| *l == "Screen Suite").expect("Screen Suite");
+    let lib = items.iter().position(|l| *l == "Screen Library").expect("Screen Library");
+    assert!(suite * 5 < n, "Screen Suite index {suite} of {n} is not < 20%: {items:?}");
+    assert!(lib * 5 < n, "Screen Library index {lib} of {n} is not < 20%: {items:?}");
+    assert!(suite < lib);
+    let shortcut = |name: &str| {
+        window.iter().find_map(|n| match n {
+            MenuNode::Item(e) if e.label == name => Some(e.shortcut.clone()),
+            _ => None,
+        })
+    };
+    assert_eq!(shortcut("Screen Suite"), Some(None), "Screen Suite never had a Window-menu shortcut");
+    assert_eq!(shortcut("Screen Library"), Some(None), "Screen Library never had a Window-menu shortcut");
+    assert_eq!(shortcut("Audio"), Some(Some("Cmd+4".into())));
+    assert_eq!(shortcut("Render Queue"), Some(Some("Cmd+Alt+0".into())));
+    assert_eq!(shortcut("Tools"), Some(Some("Cmd+1".into())));
+}
+
+#[test]
 fn parse_rejects_bad_trees() {
     assert!(parse("File\n  Empty\n", true).is_err());
     assert!(parse("File\n   Odd | file.save\n", true).is_err());

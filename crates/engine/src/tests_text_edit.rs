@@ -259,3 +259,77 @@ fn fonts_lists_bundled_and_installed_families() {
     assert_eq!(crate::font_styles("NOTO SERIF"), styles);
     assert_eq!(crate::font_styles("No Such Family").len(), 5);
 }
+
+#[test]
+fn new_arabic_text_is_auto_rtl_and_right_aligned() {
+    let mut s = Session::default();
+    s.execute("comp.new", json!({"name": "C", "width": 1600, "height": 900, "duration": 2})).unwrap();
+    let ar = s.execute("layer.newText", json!({"text": "خصم ٥٠٪ على كل شيء | 50% OFF everything", "size": 48})).unwrap()["layer"].as_u64().unwrap();
+    let d = doc(&s, ar);
+    assert_eq!(d.direction, effectcraft_keyframe::Direction::Auto);
+    assert_eq!(d.justify, Justify::Right);
+    assert!(d.keep_arabic_joined);
+    assert!(!d.arabic_fallback.is_empty());
+    let en = s.execute("layer.newText", json!({"text": "Hello", "size": 48})).unwrap()["layer"].as_u64().unwrap();
+    let e = doc(&s, en);
+    assert_eq!(e.direction, effectcraft_keyframe::Direction::Auto);
+    assert_eq!(e.justify, Justify::Center);
+}
+
+#[test]
+fn backspace_deletes_a_letter_and_its_harakat() {
+    let (mut s, t) = session("مَر");
+    s.execute("text.edit", json!({"layer": t, "caret": 3})).unwrap();
+    s.execute("text.delete", json!({})).unwrap();
+    assert_eq!(doc(&s, t).text, "مَ");
+    s.execute("text.delete", json!({})).unwrap();
+    assert_eq!(doc(&s, t).text, "");
+}
+
+#[test]
+fn old_projects_keep_ltr_when_direction_is_omitted() {
+    let raw = serde_json::from_str::<TextDoc>(r#"{"text":"خصم","font":"Inter","size":72}"#).unwrap();
+    assert_eq!(raw.direction, effectcraft_keyframe::Direction::Ltr);
+    assert!(!raw.keep_arabic_joined);
+    assert!(raw.arabic_fallback.is_empty());
+    assert!(!raw.kashida_justify);
+}
+
+#[test]
+fn visual_arrows_follow_caret_x_in_rtl() {
+    let (mut s, t) = session("خصم");
+    s.execute("layer.setText", json!({"layer": t, "direction": "rtl"})).unwrap();
+    s.execute("text.edit", json!({"layer": t, "caret": 1})).unwrap();
+    let start = sel(&s).1;
+    s.execute("text.moveCaret", json!({"to": "left"})).unwrap();
+    let left = sel(&s).1;
+    s.execute("text.moveCaret", json!({"to": "right"})).unwrap();
+    s.execute("text.moveCaret", json!({"to": "right"})).unwrap();
+    let right = sel(&s).1;
+    assert_ne!(left, start, "visual left moved the caret");
+    assert_ne!(right, left, "visual right is not the same as left");
+    assert!(right <= 3 && left <= 3);
+}
+
+#[test]
+fn set_text_accepts_arabic_optional_fields() {
+    let (mut s, t) = session("Hello");
+    s.execute(
+        "layer.setText",
+        json!({
+            "layer": t,
+            "direction": "auto",
+            "arabicFallback": "Noto Naskh Arabic",
+            "digits": "arabicIndic",
+            "keepArabicJoined": true,
+            "kashidaJustify": true
+        }),
+    )
+    .unwrap();
+    let d = doc(&s, t);
+    assert_eq!(d.direction, effectcraft_keyframe::Direction::Auto);
+    assert_eq!(d.arabic_fallback, "Noto Naskh Arabic");
+    assert_eq!(d.digit_style, effectcraft_keyframe::DigitStyle::ArabicIndic);
+    assert!(d.keep_arabic_joined);
+    assert!(d.kashida_justify);
+}
