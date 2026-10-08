@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::combiner::{CombinerLayout, DupWarning, active_combiners};
 use crate::fuzzy::{names_match_90, similarity};
-use crate::inventory::{Library, Preset, size_mode_alias};
+use crate::inventory::{Library, Preset};
 use crate::normalize::{compact_size, format_size, normalize, split_paste};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -67,12 +67,6 @@ fn paste_alias(lib: &Library, token: &str) -> Vec<String> {
     if q.contains("topaz") {
         return lib.presets.iter().filter(|p| normalize(&p.name).contains("topaz")).map(|p| p.name.clone()).collect();
     }
-    if let Some(mapped) = size_mode_alias(token) {
-        if let Some(p) = lib.preset_by_name(mapped) {
-            return vec![p.name.clone()];
-        }
-        return vec![mapped.to_string()];
-    }
     Vec::new()
 }
 
@@ -95,7 +89,9 @@ pub fn select_pasted(lib: &Library, paste: &[String], mode: JobMode) -> ManagerS
     }
     names = unique_keep(names);
     let matches: Vec<ManagerMatch> = names.iter().map(|n| match_one(lib, n, mode)).collect();
-    let selected: Vec<String> = matches.iter().filter(|m| m.status == "ok").map(|m| m.preset.clone()).collect();
+    // Keep the asked / cover name (Top Gear, Quartz, Grand Avenues) so comps are
+    // named after what was booked, not the SM pool stand-in.
+    let selected: Vec<String> = matches.iter().filter(|m| m.status == "ok").map(|m| m.asked.clone()).collect();
     let combiners = if mode == JobMode::BySize { active_combiners(lib, &selected) } else { Vec::new() };
     let warnings: Vec<DupWarning> = combiners.iter().flat_map(|c| c.warnings.clone()).collect();
     ManagerSelection { mode, names: names.clone(), selected, show_selected_only: true, matches, combiners, warnings }

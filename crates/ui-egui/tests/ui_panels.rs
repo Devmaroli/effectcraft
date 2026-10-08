@@ -216,6 +216,9 @@ fn screen_suite_booking_build_and_extra_stack_warning() {
     assert_eq!(h.state().session.state.screen.tab, "build");
     assert!(h.state().session.state.screen.manager.show_selected_only);
     assert!(h.state().auto.find("screenSuite.apply").is_some() || h.state().auto.find("screenSuite.tab.build").is_some());
+    assert!(h.state().auto.find("screenSuite.prefix").is_some(), "Screen Manager must show Prefix in both modes");
+    assert!(h.state().auto.find("screenSuite.suffix").is_some(), "Screen Manager must show Suffix in both modes");
+    assert!(h.state().auto.find("screenSuite.editLibrary").is_some());
 
     h.state_mut().session.execute("comp.new", json!({"name": "Al Salam Sync A", "width": 1536, "height": 576, "frameRate": 25.0, "open": false})).unwrap();
     h.state_mut().session.execute("comp.new", json!({"name": "Al Salam Sync B", "width": 1536, "height": 576, "frameRate": 25.0, "open": false})).unwrap();
@@ -228,6 +231,7 @@ fn screen_suite_booking_build_and_extra_stack_warning() {
     assert!(!h.state().session.state.screen.matcher.oversized.is_empty());
     assert_eq!(h.state().session.state.screen.tab, "qc");
     assert!(h.state().auto.find("screenSuite.matcher.check").is_some());
+    assert!(h.state().auto.find("screenSuite.sendAnyway").is_some(), "Send anyway… when Size Matcher has not passed");
     assert!(h.state().auto.find("screenSuite.alert.banner").is_some(), "extra-stack and Size Matcher flags must stay as an in-app banner");
     assert!(h.state().auto.find("screenSuite.tab.qc.badge").is_some() || h.state().auto.find("screenSuite.tab.build.badge").is_some());
     assert!(

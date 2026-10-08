@@ -9,9 +9,13 @@ pub mod alerts;
 pub mod combiner;
 pub mod fuzzy;
 pub mod inventory;
+pub mod library_edit;
+pub mod live;
 pub mod manager;
 pub mod matcher;
+pub mod naming;
 pub mod normalize;
+pub mod send;
 pub mod sorter;
 
 pub use adapter::{LayerTag, format_tag, parse_tag_text};
@@ -19,16 +23,20 @@ pub use alerts::{AlertLevel, PanelAlert, collect_alerts, tab_alert_count};
 pub use combiner::{AcceptedSize, CombinerLayout, DupWarning, FacePlacement, accepted_sizes_for, active_combiners, extra_stacked, unique_source_slots};
 pub use fuzzy::{SCREEN_SPECIFIC_NAME_MIN, names_match_90, similarity, token_score};
 pub use inventory::{Library, STUDIO_FPS, Screen, duration_for, is_palm_trees, size_mode_alias};
+pub use library_edit::{ImportPreview, LibraryIssue, MergedScreenRow, library_issues, merged_screens};
+pub use live::{BookingDiff, OrphanedComp};
 pub use manager::{JobMode, ManagerSelection, select_pasted};
 pub use matcher::{CompProbe, MatchReport, check_comps};
+pub use naming::{CompNameFrom, compose_comp_name, material_stem, unique_comp_name};
 pub use normalize::{normalize, parse_pixel_size, split_paste, strip_leading_list_marker};
-pub use sorter::{MatchMode, SorterFilters, SorterResult, sort_lines};
+pub use send::{SendPreset, default_send_preset};
+pub use sorter::{MatchMode, SorterFilters, SorterResult, hidden_row_count, send_names, sort_lines};
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::combiner::CombinerLayout;
-    use crate::inventory::is_al_salam_sync;
+    use crate::inventory::{is_al_salam_sync, is_avenues_entrance};
     use crate::manager::JobMode;
     use crate::sorter::unresolved_flags;
 
@@ -156,7 +164,9 @@ mod tests {
         assert_eq!(size_mode_alias("The Avenues Quartz"), Some("Diamond"));
         let lib = lib();
         let size = select_pasted(&lib, &["Top Gear".into()], JobMode::BySize);
-        assert!(size.matches.iter().any(|m| m.status == "ok" && normalize(&m.preset).contains("baitak")), "{size:?}");
+        assert!(size.matches.iter().any(|m| m.status == "ok"), "{size:?}");
+        assert!(size.selected.iter().any(|n| normalize(n).contains("top gear")), "by-size keeps the pasted name: {size:?}");
+        assert!(!size.selected.iter().any(|n| normalize(n) == "baitak"), "Top Gear must not be renamed to Baitak when only Top Gear was pasted: {size:?}");
         let spec = select_pasted(&lib, &["Top Gear".into()], JobMode::ScreenSpecific);
         assert!(spec.matches.iter().all(|m| !normalize(&m.preset).contains("baitak") || m.status != "ok"), "{spec:?}");
         let diamond = select_pasted(&lib, &["Quartz".into()], JobMode::ScreenSpecific);
@@ -179,7 +189,9 @@ mod tests {
         assert!(r.paste_names_screen_specific.iter().any(|n| normalize(n).contains("piccadilly")));
         let filtered =
             sort_lines(&lib, "Piccadilly", true, MatchMode::Strict, &SorterFilters { group: "no-such-group".into(), ..SorterFilters::default() }, false);
-        assert!(!filtered.unmatched.is_empty() || filtered.hits.is_empty());
+        assert!(filtered.hits.iter().any(|h| normalize(&h.screen).contains("piccadilly")), "filters must not drop matches: {filtered:?}");
+        assert!(filtered.rows.iter().any(|r| r.hidden), "filters only hide rows: {filtered:?}");
+        assert!(filtered.paste_names_by_size.iter().any(|n| normalize(n).contains("piccadilly")));
         let _ = unresolved_flags(&r);
         let kept = strip_leading_list_marker("1.7HD");
         assert_eq!(kept, "1.7HD");
@@ -203,6 +215,34 @@ mod tests {
         let alerts = collect_alerts(&SorterResult::default(), &select_pasted(&lib, &["Top Gear".into()], JobMode::ScreenSpecific), &report);
         assert!(alerts.iter().any(|a| a.kind == "missing" || a.kind == "sizeMismatch"));
         assert!(alerts.iter().any(|a| a.tab == "qc"));
+    }
+
+    #[test]
+    fn by_size_groups_spring_sale_and_filters_still_send() {
+        let lib = lib();
+        let paste = "Jahra Prime\nSalmiya Express\nJahra Rotonda\nAl Salam Sync\nPiccadilly\nTop Gear\nAvenues Quartz\nAl Nassar Tower\n1st Ring Road\nMarina Palm Trees\nGrand Avenues Entrance";
+        let r = sort_lines(&lib, paste, true, MatchMode::Flexible, &SorterFilters::default(), false);
+        let names: Vec<&str> = r.paste_names_by_size.iter().map(String::as_str).collect();
+        assert!(names.contains(&"1.7HD"), "{names:?}");
+        assert!(names.contains(&"2.6"), "{names:?}");
+        assert!(names.contains(&"Al Salam Sync"), "{names:?}");
+        assert!(names.contains(&"Top Gear"), "{names:?}");
+        assert!(!names.contains(&"Baitak"), "only Top Gear was pasted: {names:?}");
+        assert!(names.iter().any(|n| n.contains("Quartz") || *n == "Avenues Quartz" || *n == "The Avenues Quartz"), "{names:?}");
+        assert!(names.contains(&"Grand Avenues"), "{names:?}");
+        assert!(!names.iter().any(|n| *n == "1.7HD" && r.rows.iter().any(|row| row.use_name == "1.7HD" && row.covers.iter().any(|c| is_avenues_entrance(c)))));
+        let hd = r.rows.iter().find(|row| row.use_name == "1.7HD").expect("1.7HD");
+        assert!(hd.count >= 2, "Jahra Prime + Salmiya (+ Rotunda) fold into 1.7HD: {hd:?}");
+        assert!(!hd.covers.iter().any(|c| is_avenues_entrance(c)), "{hd:?}");
+        let both = sort_lines(&lib, "Baitak\nTop Gear", true, MatchMode::Flexible, &SorterFilters::default(), false);
+        assert!(both.paste_names_by_size.iter().any(|n| n.as_str() == "Baitak"), "{:?}", both.paste_names_by_size);
+        assert_eq!(both.paste_names_by_size.iter().filter(|n| *n == "Baitak" || *n == "Top Gear").count(), 1);
+        let outdoor = sort_lines(&lib, paste, true, MatchMode::Flexible, &SorterFilters { kind: "Outdoor".into(), ..SorterFilters::default() }, false);
+        let hidden = hidden_row_count(&outdoor);
+        assert!(hidden >= 1, "Grand Avenues (indoor) hidden: {:?}", outdoor.rows);
+        let sent = send_names(&outdoor, false);
+        assert!(sent.iter().any(|n| n == "Grand Avenues" || n.contains("Grand Avenues")), "hidden still sent: {sent:?}");
+        assert_eq!(sent.len(), outdoor.paste_names_by_size.len());
     }
 
     #[test]

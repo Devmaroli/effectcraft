@@ -55,7 +55,7 @@ fn name_has(name: &str, needle: &str) -> bool {
 
 pub fn is_avenues_entrance(name: &str) -> bool {
     let n = normalize(name);
-    n.contains("grand avenues entrance") || n.contains("the mall entrance") || n.contains("grand plaza entrance")
+    n.contains("grand avenues") || n.contains("grand plaza") || n.contains("the mall entrance") || (n.contains("the mall") && n.contains("entrance"))
 }
 
 pub fn is_yaal_slayel(name: &str) -> bool {
@@ -110,7 +110,7 @@ pub struct Combiner {
     pub columns: Vec<CombinerColumn>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Library {
     pub screens: Vec<Screen>,
     pub presets: Vec<Preset>,
@@ -360,28 +360,45 @@ pub fn cover_export_name(size: (u32, u32), matched_names: &[String]) -> String {
     let blobs: Vec<String> = matched_names.iter().map(|n| normalize(n)).collect();
     let has = |needles: &[&str]| blobs.iter().any(|b| needles.iter().any(|n| b.contains(n)));
     match size {
-        (1920, 1080) if !blobs.iter().any(|b| is_avenues_entrance(b) || is_yaal_slayel(b)) => "1.7HD".into(),
+        (1920, 1080) if blobs.iter().any(|b| is_avenues_entrance(b)) => avenues_cover_name(matched_names),
+        (1920, 1080) if !blobs.iter().any(|b| is_yaal_slayel(b)) => "1.7HD".into(),
         (1536, 576) if blobs.iter().any(|b| b.contains("al salam sync")) => "Al Salam Sync".into(),
         (1536, 576) if !blobs.iter().any(|b| b.contains("thuraya")) => "2.6".into(),
         (2624, 608) if !blobs.iter().any(|b| b.contains("thuraya")) => {
-            if has(&["baitak"]) {
-                "Baitak".into()
-            } else if has(&["top gear"]) {
-                "Top Gear".into()
-            } else {
-                "Baitak".into()
-            }
+            let baitak = has(&["baitak"]);
+            let top = has(&["top gear"]);
+            if top && !baitak { pasted_or(matched_names, "Top Gear") } else { "Baitak".into() }
         }
         (1440, 1800) => {
-            if has(&["diamond"]) {
-                "Diamond".into()
-            } else if has(&["quartz"]) {
-                "The Avenues Quartz".into()
-            } else {
-                "Diamond".into()
-            }
+            let diamond = has(&["diamond"]);
+            let quartz = has(&["quartz"]);
+            if quartz && !diamond { pasted_or(matched_names, "Avenues Quartz") } else { "Diamond".into() }
         }
         (1200, 240) => "Marina Balcony".into(),
         _ => matched_names.first().cloned().unwrap_or_else(|| format_size(size.0, size.1)),
+    }
+}
+
+fn pasted_or(names: &[String], fallback: &str) -> String {
+    names.first().cloned().filter(|n| !n.is_empty()).unwrap_or_else(|| fallback.to_string())
+}
+
+/// Avenues entrances share one 1920×1080 group (never 1.7HD). Named after the pasted
+/// screen, or the first alphabetically when several are pasted.
+fn avenues_cover_name(matched_names: &[String]) -> String {
+    let mut shorts: Vec<String> = matched_names.iter().map(|n| short_avenues_name(n)).collect();
+    shorts.sort();
+    shorts.dedup();
+    shorts.into_iter().next().unwrap_or_else(|| "Grand Avenues".into())
+}
+
+fn short_avenues_name(name: &str) -> String {
+    let n = normalize(name);
+    if n.contains("grand plaza") {
+        "Grand Plaza".into()
+    } else if n.contains("the mall") {
+        "The Mall".into()
+    } else {
+        "Grand Avenues".into()
     }
 }

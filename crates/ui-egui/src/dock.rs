@@ -52,10 +52,12 @@ pub enum PanelKind {
     VrCompEditor,
     /// Window ▸ Screen Suite (Size Sorter, Screen Manager, Size Matcher).
     ScreenSuite,
+    /// Window ▸ Screen Library (floating editor for the merged screen list).
+    ScreenLibrary,
 }
 
 impl PanelKind {
-    pub const ALL: [PanelKind; 35] = [
+    pub const ALL: [PanelKind; 36] = [
         PanelKind::Project,
         PanelKind::EffectControls,
         PanelKind::Composition,
@@ -91,6 +93,7 @@ impl PanelKind {
         PanelKind::CreateNullsFromPaths,
         PanelKind::VrCompEditor,
         PanelKind::ScreenSuite,
+        PanelKind::ScreenLibrary,
     ];
     pub fn title(self) -> &'static str {
         match self {
@@ -131,6 +134,7 @@ impl PanelKind {
             PanelKind::CreateNullsFromPaths => "Create Nulls From Paths",
             PanelKind::VrCompEditor => "VR Comp Editor",
             PanelKind::ScreenSuite => "Screen Suite",
+            PanelKind::ScreenLibrary => "Screen Library",
         }
     }
     pub fn id(self) -> String {

@@ -835,6 +835,16 @@ pub fn frontend(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str, p: Valu
             }
             let panel = PanelKind::from_name(name).ok_or_else(|| format!("unknown panel `{name}`"))?;
             app.show_panel(panel);
+            if p.get("float").and_then(Value::as_bool).unwrap_or(false) {
+                let screen = ctx.content_rect();
+                let rect = if panel == PanelKind::ScreenLibrary {
+                    let c = screen.center();
+                    [c.x - 490.0, c.y - 310.0, 980.0, 620.0]
+                } else {
+                    crate::dock_ui::default_float_rect(screen)
+                };
+                let _ = app.edit_layout(|l| l.float(panel, rect));
+            }
             Value::Null
         }
         "window.workspace" => {
