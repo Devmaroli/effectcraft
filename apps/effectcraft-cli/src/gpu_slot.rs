@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use effectcraft_engine::Session;
 use effectcraft_gpu::Gpu;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub struct GpuSlot {
     gpu: Option<Arc<Gpu>>,

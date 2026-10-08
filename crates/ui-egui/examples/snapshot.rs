@@ -22,7 +22,7 @@ use effectcraft_ui_egui::{ControlRequest, EffectcraftApp};
 use egui::epaint::{Color32, ImageData, Primitive, TextureId};
 use egui_kittest::{Harness, TestRenderer};
 use image::RgbaImage;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 struct Args {
     out: String,
