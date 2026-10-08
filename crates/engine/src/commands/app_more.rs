@@ -349,6 +349,7 @@ pub fn system_report(s: &Session) -> Value {
         "export": export,
         "logging": crate::logging::is_enabled(),
         "recentWarnings": crate::logging::recent().into_iter().rev().take(20).collect::<Vec<_>>(),
+        "playback": s.playback_caps.to_json(),
         "issues": issues,
     })
 }
@@ -600,5 +601,6 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("comp.vr.extractCubemap", "Extract Cubemap...", ["Composition", "VR"], None, "{comp?, faceSize?}", has_comp, extract_cubemap),
         query!("help.systemInfo", "System Information", "{}", |s, _| Ok(system_report(s))),
+        query!("playback.caps", "Playback capabilities", "{}", |s, _| Ok(s.playback_caps.to_json())),
     ]
 }

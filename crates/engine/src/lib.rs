@@ -30,6 +30,7 @@ pub mod menus;
 pub mod models;
 pub mod offload;
 pub mod perf;
+pub mod playback_caps;
 pub mod prefs;
 pub mod preview;
 pub mod psd_import;
@@ -426,6 +427,8 @@ pub struct Session {
     /// event loop (the desktop app) turn this on; headless sessions run `footage.check` when
     /// they want it.
     pub check_footage_on_open: bool,
+    /// Startup (and device-lost) playback capability probe. Agents read this as JSON.
+    pub playback_caps: playback_caps::PlaybackCaps,
 }
 
 /// A thumbnail render ([`Session::thumbnail_job`]): (width, height, RGBA8).
@@ -508,6 +511,7 @@ impl Default for Session {
             next_task_id: 1,
             learn: None,
             check_footage_on_open: false,
+            playback_caps: playback_caps::PlaybackCaps::probe_host(),
         }
     }
 }

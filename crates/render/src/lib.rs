@@ -53,6 +53,8 @@ pub trait FootageSource: Send + Sync {
     }
     /// Change the sequential read-ahead depth (sources without a decoder ignore it).
     fn set_prefetch_depth(&self, _frames: usize) {}
+    /// Size sequential prefetch from decoded frame bytes and available RAM.
+    fn size_prefetch(&self, _bytes_per_frame: usize, _ram_available: u64) {}
     /// `frames` interleaved stereo sample frames of `item`'s audio from source time `t` at
     /// `rate` Hz (`None` when unavailable).
     fn audio(&self, _item: ItemId, _footage: &Footage, _t: Tick, _frames: usize, _rate: u32) -> Option<Vec<f32>> {
@@ -825,7 +827,11 @@ impl<'a> Renderer<'a> {
             return canvas;
         }
         let ctx = self.ctx(comp_id, comp, t);
-        self.draw_comp(&ctx, &mut canvas, true);
+        if let Some(fast) = self.simple_footage_canvas(&ctx, w, h) {
+            canvas = fast;
+        } else {
+            self.draw_comp(&ctx, &mut canvas, true);
+        }
         // The canvas is already quantised after every layer; only re-encoding changes it.
         if let Some(c) = self.pipe.from_blend() {
             color::convert(&mut canvas, &c);
@@ -1897,6 +1903,53 @@ impl<'a> Renderer<'a> {
         Some(self.ctx(comp_id, self.project.comp(comp_id)?, t))
     }
 
+    /// Direct-to-canvas footage when the frame is a single untransformed (or axis-aligned fill)
+    /// footage layer: skip masks, effects, and the compositor walk. `None` = use the full walk.
+    /// The image is in blending space at canvas size (callers still run the output colour pipe).
+    pub fn simple_footage_canvas(&self, ctx: &EvalCtx<'a>, canvas_w: u32, canvas_h: u32) -> Option<Image> {
+        if self.depth != 0 || self.opts.roi.is_some() {
+            return None;
+        }
+        let vis = self.visible_layers(ctx);
+        let layer = vis.first().copied().filter(|_| vis.len() == 1)?;
+        if layer.is_3d() || layer.switches.adjustment || layer.switches.collapse || layer.preserve_transparency {
+            return None;
+        }
+        if self.quality(layer) == Quality::Wireframe || layer.blend_mode != BlendMode::Normal {
+            return None;
+        }
+        if ctx.opacity(layer) < 0.999 {
+            return None;
+        }
+        if layer.track_matte.is_some_and(|tm| tm.layer != layer.id && ctx.comp.layer(tm.layer).is_some()) {
+            return None;
+        }
+        if layer.masks().is_some_and(|m| m.groups().any(|g| g.enabled)) {
+            return None;
+        }
+        if layer.switches.effects && layer.effects().is_some_and(|fx| fx.groups().any(|g| g.enabled)) {
+            return None;
+        }
+        if styles::active(ctx, layer) {
+            return None;
+        }
+        let LayerSource::Footage { item } = layer.source else { return None };
+        let it = self.project.item(item)?;
+        let ItemKind::Footage(f) = &it.kind else { return None };
+        if !f.has_video {
+            return None;
+        }
+        let (m, _) = ctx.layer_to_comp(layer);
+        if !footage_fills_comp(&m, f.width as f64, f.height as f64, ctx.comp.width as f64, ctx.comp.height as f64) {
+            return None;
+        }
+        let buf = self.source(ctx, layer)?;
+        let mut img =
+            if buf.img.width == canvas_w && buf.img.height == canvas_h { buf.img } else { effectcraft_raster::resample(&buf.img, canvas_w, canvas_h) };
+        self.pipe.quantize(&mut img);
+        Some(img)
+    }
+
     /// The layers drawn at the context time, bottom to top (solo, guides and visibility
     /// applied).
     pub fn visible_layers(&self, ctx: &EvalCtx<'a>) -> Vec<&'a Layer> {
@@ -2191,6 +2244,8 @@ mod tests_collapse;
 #[cfg(test)]
 mod tests_color;
 #[cfg(test)]
+mod tests_fast_path;
+#[cfg(test)]
 mod tests_frame_blend;
 #[cfg(test)]
 mod tests_mask_blur;
@@ -2200,3 +2255,16 @@ mod tests_nested;
 mod tests_paint;
 #[cfg(test)]
 mod tests_time;
+
+/// Axis-aligned footage that covers the composition (identity or a simple scale-to-fill).
+fn footage_fills_comp(m: &Mat3, fw: f64, fh: f64, cw: f64, ch: f64) -> bool {
+    if fw < 1.0 || fh < 1.0 || cw < 1.0 || ch < 1.0 {
+        return false;
+    }
+    let src = [[0.0, 0.0], [fw, 0.0], [0.0, fh], [fw, fh]];
+    let dst = [[0.0, 0.0], [cw, 0.0], [0.0, ch], [cw, ch]];
+    src.iter().zip(dst).all(|([x, y], [wx, wy])| {
+        let p = m.apply(vec2(*x, *y));
+        (p.x - wx).abs() < 1.5 && (p.y - wy).abs() < 1.5
+    })
+}

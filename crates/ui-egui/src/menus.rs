@@ -393,6 +393,18 @@ pub fn invoke(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str, params: V
         app.ui.viewer.res = Resolution::Auto;
         return Ok(Value::Null);
     }
+    if id == "view.adaptivePlayback" {
+        let mut on = app.session.prefs.previews.adaptive_playback;
+        let r = toggle(&mut on, &params);
+        app.set_pref("previews.adaptivePlayback", r.clone())?;
+        return Ok(r);
+    }
+    if id == "view.performance" {
+        let mut on = app.session.prefs.previews.show_performance;
+        let r = toggle(&mut on, &params);
+        app.set_pref("previews.showPerformance", r.clone())?;
+        return Ok(r);
+    }
     if let Some(th) = id.strip_prefix("view.theme.") {
         let k = crate::theme::ThemeKind::from_name(th).ok_or("unknown theme")?;
         app.set_theme(ctx, k);
@@ -624,6 +636,22 @@ fn toggle(slot: &mut bool, p: &Value) -> Value {
 
 /// Perform a frontend command (from `Event::Frontend`).
 pub fn frontend(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str, p: Value) -> Result<Value, String> {
+    if id == "view.res.auto" {
+        app.ui.viewer.res = Resolution::Auto;
+        return Ok(Value::Null);
+    }
+    if id == "view.adaptivePlayback" {
+        let mut on = app.session.prefs.previews.adaptive_playback;
+        let r = toggle(&mut on, &p);
+        app.set_pref("previews.adaptivePlayback", r.clone())?;
+        return Ok(r);
+    }
+    if id == "view.performance" {
+        let mut on = app.session.prefs.previews.show_performance;
+        let r = toggle(&mut on, &p);
+        app.set_pref("previews.showPerformance", r.clone())?;
+        return Ok(r);
+    }
     let now = ctx.input(|i| i.time);
     let v = &mut app.ui.viewer;
     Ok(match id {
@@ -1203,6 +1231,9 @@ pub(crate) fn entry_checked(app: &EffectcraftApp, e: &MenuEntry) -> Option<bool>
         "view.res.full" | "view.res.half" | "view.res.third" | "view.res.quarter" => {
             Some(v.res.label().eq_ignore_ascii_case(e.command.trim_start_matches("view.res.")))
         }
+        "view.res.auto" => Some(v.res == Resolution::Auto),
+        "view.adaptivePlayback" => Some(app.session.prefs.previews.adaptive_playback),
+        "view.performance" => Some(app.session.prefs.previews.show_performance),
         "window.workspace" => Some(pstr("name").is_some_and(|n| n == app.ui.workspace)),
         "view.panelBackground" if e.params.get("pick").is_none() => {
             let cur = match v.pasteboard {

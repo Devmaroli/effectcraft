@@ -1564,6 +1564,24 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         painter.text(r.center(), Align2::CENTER_CENTER, &text, Tokens::ui(11.5), if warn { t.warning } else { t.cache_green });
         app.auto.add("viewer.previewFps", r, &text);
     }
+    // Playback resolution badge (Half/Quarter stay one click away; Auto-while-playing shows here).
+    {
+        let label = app.playback_res_label(scale);
+        let w = 72.0 + if label.contains("auto") { 28.0 } else { 0.0 };
+        let r = Rect::from_min_size(pos2(area.max.x - w - 10.0, area.min.y + 10.0), vec2(w, 22.0));
+        painter.rect_filled(r, 11.0, Color32::from_black_alpha(170));
+        painter.text(r.center(), Align2::CENTER_CENTER, &label, Tokens::ui(11.5), t.cache_green);
+        app.auto.add("viewer.playbackRes", r, &label);
+    }
+    if app.session.prefs.previews.show_performance {
+        let text = app.performance_text();
+        let galley = painter.layout_no_wrap(text.clone(), Tokens::ui(11.0), t.text);
+        let w = (galley.size().x + 20.0).min(area.width() - 20.0).max(200.0);
+        let r = Rect::from_min_size(pos2(area.min.x + 10.0, area.max.y - 36.0), vec2(w, 24.0));
+        painter.rect_filled(r, 11.0, Color32::from_black_alpha(170));
+        painter.galley(pos2(r.min.x + 10.0, r.center().y - galley.size().y / 2.0), galley, t.text);
+        app.auto.add("viewer.performance", r, &text);
+    }
 
     vt::draw_snap(&ctx, &painter, &map, &ectx);
     vt::rulers(app, ui, &map, outer, area);

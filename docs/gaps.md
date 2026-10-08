@@ -129,8 +129,25 @@ The most important missing piece: it turns every other estimate here into a meas
   not for HD or the 6080×720 ribbon. A Windows PC with a dedicated GPU should do better on
   compositing (wgpu Direct3D 12); video decode stays software. RAM preview of already-cached frames
   is separate and can play in real time once the green bar is filled.
+- 6880×1032 ProRes 422 HQ playback-profile (Linux 4-core VM, no GPU, 8 frames). Harness
+  `a42ba8b` → smoothness PR (reduced-res YUV convert, footage fast path, 8-bit present):
+
+  | Stage (1-layer plate) | Before fps | After fps |
+  |---|---:|---:|
+  | decode+YUV→f32 Full | 31.0 | 28.7 |
+  | decode Half / Quarter | 35 / 42 | **211 / 764** |
+  | composite CPU warm | 10.6 | 19.1 |
+  | e2e Full | 7.3 | 9.0 |
+  | e2e Half | 23.7 | **40.8** |
+  | e2e Quarter | — | **156.5** |
+  | 4-layer e2e Full / Half / Quarter | 4.0 / 18.0 / 28.3 | 3.6 / 21.0 / **92.2** |
+
+  Full-size ProRes decode is unchanged (FilmCraft still IDCT at native size). Half/Quarter
+  playback is now real-time on this CPU for a 1-layer plate because convert no longer keeps a
+  full f32 frame. 4-layer Full is still not real-time (fast path does not apply). Repeat
+  playback of a filled RAM/disk cache is separate and can run at display rate.
 - Still to do: the same comps against After Effects on one machine; 4K footage; hundreds of layers;
-  hardware video decode.
+  hardware video decode; FilmCraft skip-IDCT ProRes at Half/Quarter.
 - Done when: benchmark numbers are tracked over time and regressions fail a check.
 
 ### G6. Media depth

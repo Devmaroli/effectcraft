@@ -268,6 +268,10 @@ pub struct GpuContext {
     /// Deferred readbacks (a browser worker's WebGPU device), see [`crate::deferred`].
     pub(crate) deferred: Option<Arc<crate::deferred::Deferred>>,
     readbacks: Arc<crate::readback::Readbacks>,
+    pub(crate) adapter_name: String,
+    pub(crate) backend: String,
+    pub(crate) vendor_id: u32,
+    pub(crate) f16_storage: bool,
 }
 
 fn tex_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
@@ -357,6 +361,7 @@ impl GpuContext {
         }
         let readbacks = crate::readback::Readbacks::new()?;
         let name = format!("{} ({:?})", info.name, info.backend);
+        let f16_storage = adapter.get_texture_format_features(wgpu::TextureFormat::Rgba16Float).allowed_usages.contains(wgpu::TextureUsages::STORAGE_BINDING);
         let adv3d_unsupported = crate::adv3d::raster_unsupported(adapter);
         if let Some(why) = &adv3d_unsupported {
             log::info!("gpu {name}: Advanced 3D renders on the CPU ({why})");
@@ -552,6 +557,10 @@ impl GpuContext {
             particle_states: Default::default(),
             deferred: None,
             readbacks,
+            adapter_name: info.name.clone(),
+            backend: format!("{:?}", info.backend),
+            vendor_id: info.vendor,
+            f16_storage,
         })
     }
 

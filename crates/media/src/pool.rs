@@ -251,6 +251,11 @@ impl MediaPool {
         self.inner.prefetch_depth.store(frames.min(32) as u64, Ordering::Relaxed);
     }
 
+    /// Size sequential prefetch from decoded frame bytes and available RAM (2–32).
+    pub fn size_prefetch(&self, bytes_per_frame: usize, ram_available: u64) {
+        self.set_prefetch_depth(crate::prefetch_depth(bytes_per_frame, ram_available, self.budget()));
+    }
+
     pub fn stats(&self) -> PoolStats {
         let i = &self.inner;
         let c = lock(&i.cache);
@@ -310,9 +315,9 @@ impl MediaPool {
     pub fn scale_quantum(scale: f64) -> u16 {
         if scale >= 0.9 {
             1000
-        } else if scale >= 0.66 {
+        } else if scale >= 0.45 {
             500
-        } else if scale >= 0.4 {
+        } else if scale >= 0.30 {
             333
         } else {
             250
@@ -500,11 +505,15 @@ impl Inner {
         if let Some(s) = lock(&self.sources).get(path) {
             return s.clone();
         }
-        // open outside the lock (reading and parsing a large file takes a moment)
-        let opened = self.read(path).and_then(|bytes| {
-            let name = std::path::Path::new(&**path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-            filmcraft_codecs::open_bytes(&name, bytes).map_err(MediaError::from)
-        });
+        // Stream from disk when the bytes are not already in memory (web builds / tests).
+        let opened = if lock(&self.files).contains_key(&**path) {
+            self.read(path).and_then(|bytes| {
+                let name = std::path::Path::new(&**path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                filmcraft_codecs::open_bytes(&name, bytes).map_err(MediaError::from)
+            })
+        } else {
+            crate::stream::open_path(path)
+        };
         let opened = match opened {
             Ok(s) => Some(s),
             Err(e) => {
@@ -612,12 +621,12 @@ impl Inner {
     }
 
     fn decode_scaled(&self, loc: &Loc, footage: &Footage, scale_q: u16) -> Result<Image> {
-        let img = self.decode(loc, footage)?;
+        let img = self.decode(loc, footage, scale_q)?;
         if scale_q >= 1000 || img.width == 0 || img.height == 0 {
             return Ok(img);
         }
-        let rw = ((u64::from(img.width) * u64::from(scale_q) + 500) / 1000).max(1) as u32;
-        let rh = ((u64::from(img.height) * u64::from(scale_q) + 500) / 1000).max(1) as u32;
+        let rw = ((u64::from(footage.width.max(1)) * u64::from(scale_q) + 500) / 1000).max(1) as u32;
+        let rh = ((u64::from(footage.height.max(1)) * u64::from(scale_q) + 500) / 1000).max(1) as u32;
         if rw == img.width && rh == img.height { Ok(img) } else { Ok(effectcraft_raster::resample(&img, rw, rh)) }
     }
 
@@ -643,7 +652,7 @@ impl Inner {
     #[cfg(target_arch = "wasm32")]
     fn prefetch_run(self: &Arc<Self>, _footage: &Footage, _t: Tick, _depth: usize, _scale: f64) {}
 
-    fn decode(&self, loc: &Loc, footage: &Footage) -> Result<Image> {
+    fn decode(&self, loc: &Loc, footage: &Footage, scale_q: u16) -> Result<Image> {
         let op = AlphaOp::new(footage.alpha, footage.premul_color);
         let path = &loc.key.path;
         match loc.media_t {
@@ -657,9 +666,24 @@ impl Inner {
             }
             Some(mt) => {
                 let src = self.source(path).ok_or_else(|| MediaError::Io(format!("{path}: cannot open")))?;
-                let vf = src.video_frame(FrameRequest::full(filmcraft_time::Tick(mt.0))).map_err(MediaError::from)?;
-                let buf = lock(&self.cache).lru.take_spare(vf.width as usize * vf.height as usize);
-                Ok(frame_to_image_in(&vf, op, buf))
+                let scale = (f32::from(scale_q) / 1000.0).clamp(0.02, 1.0);
+                let vf = src.video_frame(FrameRequest { time: filmcraft_time::Tick(mt.0), scale }).map_err(MediaError::from)?;
+                // If the decoder ignored `scale` (returned native pixels), convert only the
+                // preview-sized samples so Half/Quarter does not keep a full f32 frame.
+                let native = vf.width >= footage.width.saturating_sub(1);
+                let buf = lock(&self.cache).lru.take_spare({
+                    let step = if scale_q >= 900 || !native {
+                        1
+                    } else if scale_q >= 450 {
+                        2
+                    } else if scale_q >= 300 {
+                        3
+                    } else {
+                        4
+                    };
+                    (vf.width as usize / step).max(1) * (vf.height as usize / step).max(1)
+                });
+                if scale_q < 900 && native { Ok(crate::convert::frame_to_image_scaled(&vf, op, buf, scale_q)) } else { Ok(frame_to_image_in(&vf, op, buf)) }
             }
         }
     }
@@ -707,6 +731,10 @@ impl FootageSource for MediaPool {
 
     fn set_prefetch_depth(&self, frames: usize) {
         MediaPool::set_prefetch_depth(self, frames);
+    }
+
+    fn size_prefetch(&self, bytes_per_frame: usize, ram_available: u64) {
+        MediaPool::size_prefetch(self, bytes_per_frame, ram_available);
     }
 
     fn vector_frame(&self, _item: ItemId, footage: &Footage, scale: f64) -> Option<Arc<Image>> {
@@ -792,5 +820,13 @@ mod tests {
         assert_eq!(c.spare.len(), MAX_SPARE);
         assert_eq!(c.take_spare(256).len(), 256);
         assert!(c.take_spare(17).is_empty());
+    }
+
+    #[test]
+    fn scale_quantum_matches_full_half_third_quarter() {
+        assert_eq!(MediaPool::scale_quantum(1.0), 1000);
+        assert_eq!(MediaPool::scale_quantum(0.5), 500);
+        assert_eq!(MediaPool::scale_quantum(1.0 / 3.0), 333);
+        assert_eq!(MediaPool::scale_quantum(0.25), 250);
     }
 }

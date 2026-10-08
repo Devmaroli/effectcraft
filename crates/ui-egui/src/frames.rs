@@ -382,21 +382,14 @@ pub struct Frames {
 
 impl Default for Frames {
     fn default() -> Self {
-        #[cfg(not(target_arch = "wasm32"))]
-        let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).clamp(2, 16);
         Frames {
             cache: Arc::new(Mutex::new(Cache { map: HashMap::new(), order: VecDeque::new(), bytes: 0, gpu_bytes: 0, budget: 3 << 30, gpu_budget: GPU_BUDGET })),
             inflight: Arc::new(Mutex::new(HashSet::new())),
             queue: Arc::new(Mutex::new(Queue::default())),
+            // One process-wide rayon pool (`PlaybackCaps::install_rayon`, cores−2). A private
+            // pool here would oversubscribe decode and composite.
             #[cfg(not(target_arch = "wasm32"))]
-            // A panicking job would abort the whole process (rayon's default for `spawn`): log it
-            // and lose only that frame (the panic hook has logged the message).
-            pool: rayon::ThreadPoolBuilder::new()
-                .num_threads(threads)
-                .thread_name(|i| format!("ec-frame-{i}"))
-                .panic_handler(|_| log::error!("a frame render panicked; that frame was skipped"))
-                .build()
-                .ok(),
+            pool: None,
             ctx: None,
             last_ms: Arc::new(Mutex::new(0.0)),
             content_keys: Arc::default(),
@@ -584,6 +577,11 @@ impl Frames {
 
     pub fn budget(&self) -> usize {
         self.cache.lock().map(|c| c.budget).unwrap_or(0)
+    }
+
+    /// RAM preview fill: `(used_bytes, budget_bytes)`.
+    pub fn ram_fill(&self) -> (usize, usize) {
+        self.cache.lock().map(|c| (c.bytes.saturating_add(c.gpu_bytes), c.budget)).unwrap_or((0, 0))
     }
 
     pub fn clear(&self) {

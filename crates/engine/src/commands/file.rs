@@ -510,6 +510,12 @@ fn project_settings(s: &mut Session, p: &Value) -> Result<Value> {
                 _ => return Err(bad("file.projectSettings", "renderer: gpu|software")),
             };
         }
+        if let Some(u) = p.get("useProxies") {
+            proj.settings.use_proxies = match u {
+                Value::Bool(b) => *b,
+                _ => return Err(bad("file.projectSettings", "useProxies: bool")),
+            };
+        }
         if let Some(t) = str_p(p, "timeDisplay") {
             proj.settings.time_display = effectcraft_project::TimeDisplayStyle::parse(t)
                 .ok_or_else(|| bad("file.projectSettings", format!("timeDisplay: timecode|frames|feet35|feet16, not `{t}`")))?;
@@ -585,7 +591,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Project Settings...",
             ["File"],
             Some("Cmd+Alt+Shift+K"),
-            "{bitDepth?: 8|16|32, colorEngine?: adobe|ocio, workingSpace?: none|srgb|rec709|rec2020|p3|acescg|aces2065, linearize?, blendLinear?, hdr?: clip|compand|toneMap, outputSpace?: srgb|rec709|rec2020|p3|rec2100pq|rec2100hlg, renderer?: gpu|software, timeDisplay?: timecode|frames|feet35|feet16}",
+            "{bitDepth?: 8|16|32, colorEngine?: adobe|ocio, workingSpace?: none|srgb|rec709|rec2020|p3|acescg|aces2065, linearize?, blendLinear?, hdr?: clip|compand|toneMap, outputSpace?: srgb|rec709|rec2020|p3|rec2100pq|rec2100hlg, renderer?: gpu|software, useProxies?: bool, timeDisplay?: timecode|frames|feet35|feet16}",
             always,
             project_settings
         ),

@@ -27,8 +27,13 @@ pub fn probe(path: impl AsRef<Path>) -> Result<Footage> {
 /// Probe a file without image-sequence detection.
 pub fn probe_single(path: impl AsRef<Path>) -> Result<Footage> {
     let path = path.as_ref();
+    let ext = ext_of(path);
+    if crate::VIDEO_EXTENSIONS.contains(&ext.as_str()) || crate::AUDIO_EXTENSIONS.contains(&ext.as_str()) {
+        let src = crate::stream::open_path(&path.to_string_lossy())?;
+        return Ok(footage_from_info(&path.to_string_lossy(), src.info()));
+    }
     let bytes = std::fs::read(path).map_err(|e| MediaError::Io(format!("{}: {e}", path.display())))?;
-    if crate::MODEL_EXTENSIONS.contains(&ext_of(path).as_str()) {
+    if crate::MODEL_EXTENSIONS.contains(&ext.as_str()) {
         let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
         return probe_model(&path.to_string_lossy(), &bytes, &|uri| std::fs::read(dir.join(uri)).ok());
     }

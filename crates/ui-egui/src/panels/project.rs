@@ -444,6 +444,13 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         }
         icons::paint(&lp, Rect::from_center_size(pos2(x0 + 18.0, r.center().y), vec2(14.0, 14.0)), item_icon(it), t.text_dim);
         // Proxy indicator: filled = the proxy is used, hollow = set but off. Click to switch.
+        // Keep this paint-only (easy to rebase against Project-panel layout work).
+        let proxy_job = app.proxy_cache.as_ref().and_then(|c| {
+            c.job_for_item(id.0).or_else(|| match &it.kind {
+                ItemKind::Footage(f) => c.job(&f.path),
+                _ => None,
+            })
+        });
         if let Some(px) = it.proxy.as_ref() {
             let pr = Rect::from_center_size(pos2(x0 + 4.0, r.center().y), vec2(9.0, 9.0));
             if px.enabled {
@@ -460,6 +467,16 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
             if presp.clicked() {
                 actions.push(("file.useProxy".into(), json!({"item": id.0})));
             }
+        } else if let Some(job) =
+            proxy_job.as_ref().filter(|j| matches!(j.status, effectcraft_media::ProxyStatus::Queued | effectcraft_media::ProxyStatus::Running))
+        {
+            let pr = Rect::from_center_size(pos2(x0 + 4.0, r.center().y), vec2(9.0, 9.0));
+            lp.rect_stroke(pr, 1.0, Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
+            let frac = (job.progress as f32 / 1000.0).clamp(0.0, 1.0);
+            if frac > 0.0 {
+                lp.rect_filled(Rect::from_min_size(pr.min, vec2(pr.width() * frac, pr.height())), 1.0, t.accent);
+            }
+            app.auto.add(&format!("project.item.{}.proxy", id.0), pr, &format!("Proxy {}%", (frac * 100.0) as u32));
         }
         let name_clip = Rect::from_min_max(pos2(x0 + 30.0, r.min.y), pos2(r.min.x + name_w + 4.0, r.max.y)).intersect(list);
         let name_rect = Rect::from_min_max(pos2(x0 + 28.0, r.min.y + 2.0), pos2(r.min.x + name_w + 2.0, r.max.y - 2.0));
@@ -608,6 +625,27 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
             if ui.button("Rename").clicked() {
                 ctx.data_mut(|d| d.insert_temp::<Editing>(edit_id(), (id.0, "name".into(), it.name.clone())));
                 ui.close();
+            }
+            // Isolated from drag-select / grid / New Comp From Selection edits on this menu.
+            if matches!(it.kind, ItemKind::Footage(_)) {
+                if it.proxy.is_some() {
+                    if ui.button("Remove Proxy").clicked() {
+                        if let ItemKind::Footage(f) = &it.kind
+                            && let Some(c) = &app.proxy_cache
+                        {
+                            c.remove(&f.path);
+                        }
+                        actions.push(("file.setProxyNone".into(), json!({"item": id.0})));
+                        ui.close();
+                    }
+                } else if ui.button("Create Proxy").clicked() {
+                    if let ItemKind::Footage(f) = &it.kind
+                        && let Some(c) = &app.proxy_cache
+                    {
+                        c.start(app.session.footage.clone(), f, *id);
+                    }
+                    ui.close();
+                }
             }
             if it.parent.is_some() && ui.button("Move to Project Root").clicked() {
                 actions.push(("project.move".into(), json!({"items": [id.0], "folder": null})));
