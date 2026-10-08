@@ -472,6 +472,18 @@ pub fn default_project_columns() -> Vec<String> {
     ["type", "size", "duration", "fps"].map(String::from).to_vec()
 }
 
+fn default_project_thumb_size() -> f32 {
+    112.0
+}
+
+/// Project panel list vs thumbnail grid; remembered per project (the session).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProjectView {
+    #[default]
+    List,
+    Grid,
+}
+
 /// What an Effect Controls crosshair / eyedropper click in the viewer sets.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FxPick {
@@ -596,12 +608,26 @@ pub struct UiState {
     /// `duration`, `path`, `comment`); toggled from the column header's context menu.
     #[serde(default = "default_project_columns")]
     pub project_columns: Vec<String>,
+    /// User-resized Project panel column widths in points (`name`, `type`, `size`, …).
+    /// Restored from Settings on launch; leftover panel width still goes to Name first.
+    #[serde(default)]
+    pub project_col_widths: BTreeMap<String, f32>,
     /// Horizontal scroll of the Project panel's optional columns (Name and Label stay put).
     #[serde(default)]
     pub project_hscroll: f32,
     /// Vertical scroll of the Project panel's item list (points); only visible rows are drawn.
     #[serde(default)]
     pub project_scroll: f32,
+    /// List or thumbnail grid. Remembered on the session (one choice per open project).
+    #[serde(default)]
+    pub project_view: ProjectView,
+    /// Thumbnail tile size in the grid (points).
+    #[serde(default = "default_project_thumb_size")]
+    pub project_thumb_size: f32,
+    /// Folder the thumbnail grid is showing (`None` = project root). Double-click a folder
+    /// opens it in place; the breadcrumb walks back out.
+    #[serde(default)]
+    pub project_grid_folder: Option<u64>,
     /// Effect Controls twirl state (group uids that are collapsed).
     pub fx_closed: BTreeSet<u64>,
     /// Slider params whose slider row is twirled open (AE hides sliders by default).
@@ -700,6 +726,10 @@ impl Default for UiState {
             project_hscroll: 0.0,
             project_scroll: 0.0,
             project_columns: default_project_columns(),
+            project_col_widths: BTreeMap::new(),
+            project_view: ProjectView::List,
+            project_thumb_size: default_project_thumb_size(),
+            project_grid_folder: None,
             fx_closed: BTreeSet::new(),
             fx_slider_open: BTreeSet::new(),
             fx_pick: None,

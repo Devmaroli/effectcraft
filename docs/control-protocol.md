@@ -118,4 +118,5 @@ shape paths by uid), `keys.setSpatialTangents` (motion-path handles) and `keys.t
 Editor transform box, timeline Alt-drag scaling).
 
 The MCP server's bridge mode (`effectcraft-cli mcp --bridge 9877`) is a thin client of this protocol;
-see [agents.md](agents.md).
+see [agents.md](agents.md). Headless EncodeCraft renders use a separate JSON-lines port on
+`effectcraft-cli serve` ([render-streaming.md](render-streaming.md)), not this UI control channel.

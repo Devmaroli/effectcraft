@@ -11,6 +11,7 @@
 //! | HEVC | MP4 (`hvc1`) | `effectcraft-hevcenc` Main / Main 10 4:2:0, I + P slices, bitrate or constant quality, level, key-frame interval | no | AAC-LC (FilmCraft) |
 //! | AV1 | MP4 (`av01`) | `effectcraft-av1enc` Main 8/10-bit 4:2:0, key + inter frames | no | AAC-LC (FilmCraft) |
 //! | WAV / AIFF | RIFF WAVE / AIFF | — | — | PCM 16/24-bit (WAV also 32-bit float), mono/stereo (audio only) |
+//! | Raw stream | stdout / pipe / file | yuv420p (BT.709 limited), rgb24, or rgba | rgba only | separate WAV via [`export_wav`] |
 //!
 //! Every frame goes through [`pipeline`]: the Render Settings overrides (Effects, Solo Switches,
 //! Guide Layers, Frame Blending, Motion Blur, Color Depth), field rendering (two fields half a
@@ -34,6 +35,7 @@ mod encode;
 mod hevc_av1;
 mod out;
 mod pipeline;
+mod stream;
 mod webm;
 mod webm_av1;
 
@@ -48,6 +50,7 @@ pub use effectcraft_project::render_queue;
 pub use effectcraft_project::render_queue::StorageQuota;
 pub use out::Sink;
 pub(crate) use pipeline::Cx;
+pub use stream::{PixFmt, StreamInfo, export_raw, export_wav, stream_info};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ExportError {
@@ -205,6 +208,12 @@ pub(crate) struct State<'p> {
     total: u64,
     done: u64,
     progress: &'p mut dyn FnMut(&Progress) -> bool,
+}
+
+impl<'p> State<'p> {
+    pub(crate) fn new(t0: Instant, total: u64, progress: &'p mut dyn FnMut(&Progress) -> bool) -> Self {
+        State { t0, total, done: 0, progress }
+    }
 }
 
 impl State<'_> {

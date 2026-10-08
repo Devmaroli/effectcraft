@@ -865,6 +865,103 @@ fn new_comp_from_selection_survives_hostile_sequence_numbers() {
     assert!(s.execute("file.newCompFromSelection", json!({"single": true, "dimensionsFrom": 99})).is_err());
 }
 
+#[test]
+fn new_comp_from_selection_dialog_modes_fps_naming_folder_and_one_undo() {
+    let mut s = Session::default();
+    let footage = |s: &mut Session, name: &str, kind: effectcraft_project::FootageKind, w: u32, h: u32, fps: f64, audio: bool| {
+        let f = effectcraft_project::Footage {
+            kind,
+            width: w,
+            height: h,
+            has_video: !audio,
+            has_audio: audio,
+            frame_rate: effectcraft_time::FrameRate::from_f64(fps),
+            duration: effectcraft_time::Tick::from_seconds_f64(if audio { 8.0 } else { 10.0 }),
+            ..Default::default()
+        };
+        std::sync::Arc::make_mut(&mut s.project).add_item(name, effectcraft_color::Label::None, None, ItemKind::Footage(f))
+    };
+    let v1 = footage(&mut s, "Honor_400_EN.mp4", effectcraft_project::FootageKind::Video, 1920, 1080, 30.0, false);
+    let v2 = footage(&mut s, "Honor_400_Marina_1080x1920.mp4", effectcraft_project::FootageKind::Video, 1080, 1920, 29.97, false);
+    let still = footage(&mut s, "stc_logo.png", effectcraft_project::FootageKind::Still, 400, 400, 25.0, false);
+    let audio = footage(&mut s, "VO_Honor_AR.wav", effectcraft_project::FootageKind::Audio, 0, 0, 25.0, true);
+    let folder = effectcraft_project::ItemId(s.execute("project.newFolder", json!({"name": "2_Footage"})).unwrap()["item"].as_u64().unwrap());
+    s.state.project_selection = vec![v1, v2, still, audio, folder];
+    let steps = s.history.undo.len();
+    // Multiple, each item's own size, 25 fps (keepVideoRate off), skip folder + audio, stem names, new folder.
+    let r = s
+        .execute(
+            "file.newCompFromSelection",
+            json!({
+                "single": false,
+                "sizeMode": "each",
+                "frameRate": 25,
+                "keepVideoRate": false,
+                "duration": 3,
+                "newFolder": "Honor_400 comps",
+                "open": false
+            }),
+        )
+        .unwrap();
+    let comps: Vec<u64> = r["comps"].as_array().unwrap().iter().filter_map(|v| v.as_u64()).collect();
+    assert_eq!(comps.len(), 3, "audio and folders are skipped in Multiple");
+    assert_eq!(s.history.undo.len(), steps + 1);
+    let dest = effectcraft_project::ItemId(r["folder"].as_u64().unwrap());
+    assert_eq!(s.project.item(dest).unwrap().name, "Honor_400 comps");
+    let c0 = s.project.comp(effectcraft_project::ItemId(comps[0])).unwrap();
+    let it0 = s.project.item(effectcraft_project::ItemId(comps[0])).unwrap();
+    assert_eq!(it0.name, "Honor_400_EN");
+    assert_eq!((c0.width, c0.height, c0.frame_rate.as_f64()), (1920, 1080, 25.0));
+    assert_eq!(it0.parent, Some(dest));
+    let c1 = s.project.comp(effectcraft_project::ItemId(comps[1])).unwrap();
+    assert_eq!((c1.width, c1.height), (1080, 1920));
+    let c2 = s.project.comp(effectcraft_project::ItemId(comps[2])).unwrap();
+    assert_eq!((c2.width, c2.duration.seconds()), (400, 3.0), "stills use the dialog length");
+    s.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(s.project.comps().count(), 0);
+    assert!(s.project.items.values().all(|i| i.name != "Honor_400 comps"));
+    // Keep each video's own frame rate.
+    s.state.project_selection = vec![v1, v2];
+    let r = s.execute("file.newCompFromSelection", json!({"frameRate": 25, "keepVideoRate": true, "open": false})).unwrap();
+    let a = s.project.comp(effectcraft_project::ItemId(r["comps"][0].as_u64().unwrap())).unwrap();
+    let b = s.project.comp(effectcraft_project::ItemId(r["comps"][1].as_u64().unwrap())).unwrap();
+    assert!((a.frame_rate.as_f64() - 30.0).abs() < 0.01);
+    assert!((b.frame_rate.as_f64() - 29.97).abs() < 0.02);
+    s.execute("edit.undo", json!({})).unwrap();
+    // All the same as the first item; custom size; existing folder.
+    s.state.project_selection = vec![v1, v2];
+    let r = s.execute("file.newCompFromSelection", json!({"sizeMode": "same", "dimensionsFrom": 0, "folder": folder.0, "open": false})).unwrap();
+    let x = s.project.comp(effectcraft_project::ItemId(r["comps"][1].as_u64().unwrap())).unwrap();
+    assert_eq!((x.width, x.height), (1920, 1080));
+    assert_eq!(s.project.item(effectcraft_project::ItemId(r["comps"][1].as_u64().unwrap())).unwrap().parent, Some(folder));
+    s.execute("edit.undo", json!({})).unwrap();
+    s.state.project_selection = vec![v1, v2];
+    let r = s.execute("file.newCompFromSelection", json!({"sizeMode": "custom", "width": 640, "height": 360, "open": false})).unwrap();
+    assert_eq!(s.project.comp(effectcraft_project::ItemId(r["comps"][0].as_u64().unwrap())).unwrap().width, 640);
+    s.execute("edit.undo", json!({})).unwrap();
+    // Single: audio joins as a layer; selected comps nest; one undo; custom name.
+    let inner = effectcraft_project::ItemId(
+        s.execute("comp.new", json!({"name": "Inner", "width": 320, "height": 180, "duration": 2})).unwrap()["comp"].as_u64().unwrap(),
+    );
+    s.state.project_selection = vec![v1, audio, inner];
+    let steps = s.history.undo.len();
+    let r = s
+        .execute(
+            "file.newCompFromSelection",
+            json!({"single": true, "name": "Honor_400_EN+AR loop", "duration": 3, "sequence": true, "overlap": true, "overlapDuration": 0.48, "open": false}),
+        )
+        .unwrap();
+    assert_eq!(s.history.undo.len(), steps + 1);
+    let cid = effectcraft_project::ItemId(r["comps"][0].as_u64().unwrap());
+    let c = s.project.comp(cid).unwrap();
+    assert_eq!(s.project.item(cid).unwrap().name, "Honor_400_EN+AR loop");
+    let names: Vec<&str> = c.layers.iter().map(|l| l.name.as_str()).collect();
+    assert_eq!(names, ["Honor_400_EN.mp4", "VO_Honor_AR.wav", "Inner"]);
+    s.execute("edit.undo", json!({})).unwrap();
+    assert!(s.project.item(inner).is_some());
+    assert_eq!(s.project.comps().count(), 1);
+}
+
 fn key_times(s: &Session, l: u64) -> Vec<f64> {
     layer(s, l).props.prop("transform/opacity").unwrap().keys.iter().map(|k| (k.time.seconds() * 30.0).round() / 30.0).collect()
 }

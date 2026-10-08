@@ -120,3 +120,31 @@ fn project_panel_columns_scroll_horizontally() {
     assert!(rect(&h, "project.sort.comment").min.x < x0 - 20.0);
     assert_eq!(rect(&h, "project.sort.name").min.x, name0, "Name stays frozen");
 }
+
+#[test]
+fn project_column_resize_auto_fit_and_saved_widths() {
+    let mut h = harness(1400.0);
+    let item = h.state().session.project.items.values().next().expect("an item").id.0;
+    h.state_mut().session.execute("project.rename", json!({"item": item, "name": "Honor_400_AlSalam_3072x576.mp4"})).unwrap();
+    h.run_steps(3);
+    let w0 = h.state().ui.project_col_widths.get("name").copied().unwrap_or(160.0);
+    let div = rect(&h, "project.colResize.name");
+    drag(&mut h, div.center(), pos2(div.center().x + 80.0, div.center().y));
+    let w1 = *h.state().ui.project_col_widths.get("name").expect("the drag stored a width");
+    assert!(w1 > w0 + 40.0, "drag widened Name {w0} → {w1}");
+    let json = effectcraft_ui_egui::panels::project_cols::widths_to_json(&h.state().ui.project_col_widths);
+    let back = effectcraft_ui_egui::panels::project_cols::widths_from_json(&json).expect("prefs round-trip");
+    assert!((back.get("name").copied().unwrap_or(0.0) - w1).abs() < 0.1);
+    // Double-click the divider (both clicks in one frame, like a real double-click).
+    let div = rect(&h, "project.colResize.name");
+    let p = div.center();
+    h.input_mut().events.push(Event::PointerMoved(p));
+    h.step();
+    for _ in 0..2 {
+        h.input_mut().events.push(Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() });
+        h.input_mut().events.push(Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() });
+    }
+    h.run_steps(3);
+    let w2 = *h.state().ui.project_col_widths.get("name").expect("auto-fit");
+    assert!(w2 > 180.0, "auto-fit to the long file name, got {w2}");
+}

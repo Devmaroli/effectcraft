@@ -3,6 +3,9 @@
 #
 #   git tag v0.5.1 && git push origin v0.5.1
 #
+# The office-test integration branch also builds artifacts (no tag, no GitHub Release)
+# so Kapildev can install one Windows build of the stacked playback + EncodeCraft work.
+#
 # Artifacts:
 #   effectcraft-Setup-x64.exe     Inno Setup, %LOCALAPPDATA%\Programs\Craft\effectcraft, no admin
 #   effectcraft-Portable-x64.zip  runs from any folder; portable.txt keeps settings next to the exe
@@ -13,6 +16,8 @@ on:
   push:
     tags:
       - "v*.*.*"
+    branches:
+      - cursor/office-test-all-5c0e
   workflow_dispatch:
 
 permissions:

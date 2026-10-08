@@ -1,0 +1,63 @@
+# Windows x64 portable zip for the EncodeCraft streaming-render branch.
+# Artifacts only — no git tag, no GitHub Release.
+name: Windows render-stream zip
+
+on:
+  push:
+    branches: [cursor/render-stream-serve-5c0e]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-render-stream-zip-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  windows-x64-zip:
+    name: Windows x64 portable zip
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: render-stream-windows-x64
+      - name: Build portable binaries
+        env:
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
+        run: cargo build --release --locked -p effectcraft -p effectcraft-cli --target x86_64-pc-windows-msvc
+      - name: Pack zip and SHA-256
+        shell: pwsh
+        run: |
+          $sha = git rev-parse --short HEAD
+          $name = "effectcraft-render-stream-windows-x64"
+          $stage = Join-Path $env:RUNNER_TEMP $name
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item target\x86_64-pc-windows-msvc\release\effectcraft.exe $stage
+          Copy-Item target\x86_64-pc-windows-msvc\release\effectcraft-cli.exe $stage
+          Copy-Item packaging\windows\portable.txt $stage
+          Copy-Item LICENSE-MIT, LICENSE-APACHE, README.md $stage -ErrorAction SilentlyContinue
+          $zip = Join-Path $env:GITHUB_WORKSPACE "dist\$name.zip"
+          New-Item -ItemType Directory -Force -Path (Join-Path $env:GITHUB_WORKSPACE 'dist') | Out-Null
+          if (Test-Path $zip) { Remove-Item $zip }
+          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip
+          $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
+          Set-Content -Path "$zip.sha256" -Value "$hash  $name.zip" -NoNewline
+          Get-Content "$zip.sha256"
+          Write-Output "sha=$sha"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: effectcraft-render-stream-windows-x64
+          path: |
+            dist/effectcraft-render-stream-windows-x64.zip
+            dist/effectcraft-render-stream-windows-x64.zip.sha256
+          if-no-files-found: error
