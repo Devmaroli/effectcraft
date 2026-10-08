@@ -18,11 +18,11 @@ use effectcraft_engine::project::build::{self, Ids};
 use effectcraft_engine::project::{Comp, Footage, ItemId, ItemKind, Layer, LayerSource, Project, Solid};
 use effectcraft_engine::sysinfo;
 use effectcraft_gpu::Gpu;
-use effectcraft_media::{MediaPool, hwdec, probe_single};
+use effectcraft_media::{hwdec, probe_single, MediaPool};
 use effectcraft_render::{Backend, LayerCache, RenderOpts, Renderer};
 use effectcraft_time::{FrameRate, Tick};
 use effectcraft_ui_egui::frames::to_color_image;
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
 use super::Failure;
 
@@ -521,6 +521,11 @@ fn profile_movie(scenario: &str, path: &Path, n: usize, gpu: Option<&Gpu>, runs:
     print_stage(&row);
     runs.push(row);
 
+    let e2e_quarter = time_e2e(&p, &pool, cid, n, 0.25)?;
+    let row = stage_json(scenario, &codec, w, h, 1, 0.25, "e2e_quarter", &e2e_quarter);
+    print_stage(&row);
+    runs.push(row);
+
     Ok(footage)
 }
 
@@ -624,13 +629,13 @@ pub(crate) fn run(args: &super::Args) -> Result<(), Failure> {
         "targetFps": 25.0,
         "host": host_json(gpu_name.as_deref(), want_gpu, &caps),
         "pipeline": {
-            "decode": "Streamed FileReader (no whole-file fs::read). D3D11VA/Vulkan Video probed; factory returns None so FilmCraft CPU runs. ProRes never HW. Ampere H.264 max 4096 so 6880-wide H.264 stays CPU.",
-            "color": "CPU YUV→premultiplied f32 RGBA (BT.601/709/2020, limited/full), row-parallel. Viewer presents RGBA8 (no readback when gpu_display).",
+            "decode": "Streamed FileReader (no whole-file fs::read). D3D11VA/Vulkan Video probed; factory returns None so FilmCraft CPU runs. ProRes never HW. Ampere H.264 max 4096 so 6880-wide H.264 stays CPU. Reduced-res: FrameRequest.scale is passed (Half=500, Quarter=250 milles); if the decoder returns native pixels, YUV convert point-samples every 2nd/4th sample so RAM does not keep a full f32 frame. True skip-IDCT ProRes is a FilmCraft decoder change.",
+            "color": "CPU YUV→premultiplied f32 RGBA (BT.601/709/2020, limited/full), row-parallel. Viewer presents RGBA8 (no readback when gpu_display). Playback frames are 8-bit or f16; 32-bit float is for final renders.",
             "prefetch": "Sized from bytes/frame and RAM (2–32); this profile still disables read-ahead so decode timings are honest.",
-            "cache": "MediaPool LRU 1 GiB decoded f32 frames; RAM preview up to ~3 GiB; JPEG half-res proxy cache (20 GiB default).",
-            "composite": "GPU texture present (no readback) when an adapter exists; CPU SIMD fallback. Preview precision RGBA8 display / f16 when the adapter stores it; renders stay f32.",
+            "cache": "MediaPool LRU 1 GiB decoded f32 frames; RAM preview up to ~3 GiB (green timeline bar); disk cache of rendered frames with a Preferences size cap (blue bar). Idle/playback render-ahead (cache_frames_when_idle default ON, 0.4s quiet). JPEG half-res proxy cache (20 GiB default). Layer cache keys footage with masks/effects by source time; static precomps omit nested time.",
+            "composite": "Footage fast path: a single untransformed/simple footage layer skips the compositor and uses the decoded frame (CPU canvas or GPU upload). GPU present via Gpu::render_display / Accelerator::comp_frame (shared with EncodeCraft — do not add a second compositor). CPU SIMD fallback. Preview precision RGBA8 display / f16 when the adapter stores it; renders stay f32.",
             "pool": "One rayon work-stealing pool, max(1, cores−2).",
-            "audioSync": "Audio-master clock; Drop frames to keep sound in sync (default ON). Adaptive Auto res Full→Half→Quarter while playing.",
+            "audioSync": "Audio-master clock; Drop frames to keep sound in sync (default ON). Adaptive Auto res Full→Half→Quarter while playing (view.adaptivePlayback / viewer.autoResToggle, default ON). Off: stay at the chosen resolution and drop frames.",
         },
         "clips": clips,
         "runs": runs,

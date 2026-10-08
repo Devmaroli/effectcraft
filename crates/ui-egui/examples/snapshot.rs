@@ -1,10 +1,12 @@
-//! Headless UI snapshot: runs the real [`EffectcraftApp`] without a window (egui_kittest + wgpu)
-//! and writes PNGs. Works regardless of window focus, Spaces or display sleep, so agents can
-//! look at the UI at any time.
+//! Headless UI snapshot: runs the real [`EffectcraftApp`] without a window (egui_kittest) and
+//! writes PNGs. Works regardless of window focus, Spaces or display sleep, so agents can look
+//! at the UI at any time. Default is wgpu; `--software` uses kittest's CPU renderer (no GPU
+//! adapter required — use it on cloud VMs with no `/dev/dri`).
 //!
 //! ```text
 //! cargo run -p effectcraft-ui-egui --example snapshot -- [--out ui.png] [--size 1680x1020]
-//!     [--scale 2] [--settle 1.5] [--empty] [--script steps.jsonl | --step '<json>']...
+//!     [--scale 2] [--settle 1.5] [--empty] [--software]
+//!     [--script steps.jsonl | --step '<json>']...
 //! ```
 //!
 //! Each script step is a control-channel request (`{"method":"engine.execute","params":{...}}`,
@@ -17,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use effectcraft_ui_egui::{ControlRequest, EffectcraftApp};
 use egui_kittest::Harness;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 struct Args {
     out: String,
@@ -25,11 +27,12 @@ struct Args {
     scale: f32,
     settle: f64,
     demo: bool,
+    software: bool,
     steps: Vec<Value>,
 }
 
 fn parse_args() -> Result<Args, String> {
-    let mut a = Args { out: "ui.png".into(), size: (1680.0, 1020.0), scale: 2.0, settle: 1.5, demo: true, steps: Vec::new() };
+    let mut a = Args { out: "ui.png".into(), size: (1680.0, 1020.0), scale: 2.0, settle: 1.5, demo: true, software: false, steps: Vec::new() };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         let mut val = || it.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -43,6 +46,7 @@ fn parse_args() -> Result<Args, String> {
             "--scale" => a.scale = val()?.parse().map_err(|_| "bad --scale")?,
             "--settle" => a.settle = val()?.parse().map_err(|_| "bad --settle")?,
             "--empty" => a.demo = false,
+            "--software" => a.software = true,
             "--step" => a.steps.push(serde_json::from_str(&val()?).map_err(|e| format!("--step: {e}"))?),
             "--script" => {
                 let path = val()?;
@@ -52,7 +56,9 @@ fn parse_args() -> Result<Args, String> {
                 }
             }
             "-h" | "--help" => {
-                return Err("usage: snapshot [--out ui.png] [--size WxH] [--scale 2] [--settle secs] [--empty] [--script f.jsonl | --step json]...".into());
+                return Err(
+                    "usage: snapshot [--out ui.png] [--size WxH] [--scale 2] [--settle secs] [--empty] [--software] [--script f.jsonl | --step json]...".into(),
+                );
             }
             _ => return Err(format!("unknown argument {arg}")),
         }
@@ -99,11 +105,12 @@ fn main() {
         let _ = session.execute("file.openDemoProject", json!({}));
     }
     let (tx, rx) = mpsc::channel::<ControlRequest>();
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(args.size.0, args.size.1))
-        .with_pixels_per_point(args.scale)
-        .wgpu()
-        .build_eframe(move |_cc| EffectcraftApp::new(session).with_control(rx));
+    let size = egui::vec2(args.size.0, args.size.1);
+    let mut harness = if args.software {
+        Harness::builder().with_size(size).with_pixels_per_point(args.scale).build_eframe(move |_cc| EffectcraftApp::new(session).with_control(rx))
+    } else {
+        Harness::builder().with_size(size).with_pixels_per_point(args.scale).wgpu().build_eframe(move |_cc| EffectcraftApp::new(session).with_control(rx))
+    };
     settle(&mut harness, args.settle);
     for step in &args.steps {
         let method = step["method"].as_str().unwrap_or_default().to_string();
