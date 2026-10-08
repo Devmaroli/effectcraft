@@ -83,8 +83,11 @@ Build them locally on Windows with Inno Setup 6 installed:
 pwsh packaging/windows/package-office.ps1
 ```
 
-On Linux, `packaging/windows/cross-gnu.sh` produces the portable zip (mingw); compile the
-Setup.exe with Inno Setup under Wine or on a Windows machine (`packaging/windows/package-office.sh`).
+On Linux, `packaging/windows/cross-gnu.sh` produces the portable zip (mingw). Then
+`packaging/windows/package-office.sh` restages `effectcraft-Portable-x64.zip` and compiles
+`effectcraft-Setup-x64.exe` with Inno Setup under Wine when ISCC is available, or with
+NSIS (`makensis`, `effectcraft.nsi`) when it is not. The tag workflow on `windows-latest`
+always uses Inno Setup.
 
 Every binary reports its version: `effectcraft --version`, `effectcraft-cli --version` and
 *Help › About EffectCraft*.

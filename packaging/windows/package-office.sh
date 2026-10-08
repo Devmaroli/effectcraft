@@ -83,6 +83,7 @@ PY
 
 Setup="$OfficeDist/effectcraft-Setup-x64.exe"
 Iss="$Root/packaging/windows/effectcraft.iss"
+Nsi="$Root/packaging/windows/effectcraft.nsi"
 Icon="$Root/assets/app-icon/effectcraft.ico"
 if Iscc="$(find_iscc)"; then
   echo "==> Inno Setup ($Iscc)"
@@ -98,8 +99,19 @@ if Iscc="$(find_iscc)"; then
   fi
   test -f "$Setup"
   echo "SETUP=$Setup"
+elif command -v makensis >/dev/null; then
+  echo "==> NSIS (makensis)"
+  rm -f "$Setup"
+  makensis -V2 \
+    -DVERSION="$VERSION" \
+    "-DBINDIR=$Stage" \
+    "-DICONPATH=$Icon" \
+    "-DOUTFILE=$Setup" \
+    "$Nsi"
+  test -f "$Setup"
+  echo "SETUP=$Setup"
 else
-  echo "warning: Inno Setup (ISCC) not found; portable zip only. Install Inno Setup 6 or set ISCC=." >&2
+  echo "warning: neither Inno Setup (ISCC) nor NSIS (makensis) found; portable zip only." >&2
 fi
 
 Sums="$OfficeDist/SHA256SUMS.txt"

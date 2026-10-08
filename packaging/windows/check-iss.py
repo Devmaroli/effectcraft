@@ -22,4 +22,16 @@ if "PrivilegesRequiredOverridesAllowed" in iss:
 marker = root / "packaging/windows/portable.txt"
 if not marker.is_file():
     raise SystemExit("missing packaging/windows/portable.txt")
-print("ok effectcraft.iss + portable.txt")
+nsi = (root / "packaging/windows/effectcraft.nsi").read_text()
+nsi_need = [
+    "RequestExecutionLevel user",
+    r"$LOCALAPPDATA\Programs\Craft\effectcraft",
+    "effectcraft-Setup-x64.exe",
+    "effectcraft-cli",
+    "Uninstall.exe",
+    "effectcraft.ico",
+]
+nsi_missing = [s for s in nsi_need if s not in nsi]
+if nsi_missing:
+    raise SystemExit(f"effectcraft.nsi missing {nsi_missing}")
+print("ok effectcraft.iss + effectcraft.nsi + portable.txt")
