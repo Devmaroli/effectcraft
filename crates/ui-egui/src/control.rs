@@ -271,6 +271,11 @@ pub fn handle(app: &mut EffectcraftApp, ctx: &egui::Context, req: &ControlReques
                 }
                 app.ui.project_columns = cols;
             }
+            if let Some(v) = p.get("projectColumnWidths")
+                && let Some(m) = crate::panels::project_cols::widths_from_json(v)
+            {
+                app.ui.project_col_widths = m;
+            }
             // Wiggler / Smoother / Motion Sketch settings (fields of `AnimToolsState`).
             if let Some(Value::Object(m)) = p.get("animTools") {
                 let mut cur = serde_json::to_value(&app.ui.anim_tools).unwrap_or_default();

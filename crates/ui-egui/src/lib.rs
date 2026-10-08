@@ -348,6 +348,9 @@ impl EffectcraftApp {
         self.ui.cache_when_idle = p.previews.cache_frames_when_idle;
         self.ui.viewer.fast_preview = p.previews.fast_previews;
         self.frames.set_budget(p.cache_budgets(self.session.sys_memory).preview);
+        if let Some(w) = p.extra.get("projectColumnWidths").and_then(crate::panels::project_cols::widths_from_json) {
+            self.ui.project_col_widths = w;
+        }
     }
 
     /// Change settings from the UI (applied next frame and saved).

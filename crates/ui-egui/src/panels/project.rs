@@ -13,6 +13,7 @@ use serde_json::json;
 
 use crate::icons::{self, Icon};
 use crate::panels::DragPayload;
+use crate::panels::project_cols;
 use crate::panels::project_select::{
     self, SCROLL_BAND, SELECT_BLUE, SelectOp, auto_scroll_delta, click_select, content_pos, count_kinds, marquee_fill, marquee_rect, select_op, touches,
 };
@@ -279,22 +280,32 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let is_grid = app.ui.project_view == ProjectView::Grid;
     // Column header: Name, Label, then the visible optional columns.
     let hdr = Rect::from_min_size(pos2(rect.min.x, sr.max.y + 6.0), vec2(rect.width(), 20.0));
-    let name_w = (rect.width() * 0.40).clamp(120.0, 260.0);
+    let mut opt_defs: Vec<(&'static str, &'static str, f32)> = vec![];
+    let mut opt_total = 0.0;
+    for key in app.ui.project_columns.clone() {
+        if let Some((k, l, fallback)) = COLUMNS.iter().find(|c| c.0 == key) {
+            let w = project_cols::stored_width(&app.ui.project_col_widths, k, *fallback);
+            opt_defs.push((k, l, w));
+            opt_total += w + 4.0;
+        }
+    }
+    // Label + gaps to the right of Name. Leftover panel width grows Name first; Type/Size/…
+    // keep their stored widths and scroll when they no longer fit.
+    let chrome = 14.0 + 18.0 + 16.0 + 8.0;
+    let stored_name = project_cols::stored_width(&app.ui.project_col_widths, "name", project_cols::NAME_DEFAULT);
+    let name_w = project_cols::name_width(rect.width(), stored_name, chrome);
     let label_x = rect.min.x + name_w + 14.0;
     let mut cols: Vec<(&'static str, &'static str, f32, f32)> = vec![("name", "Name", rect.min.x + 26.0, name_w - 26.0), ("label", "", label_x - 8.0, 18.0)];
     // Optional columns wider than the panel scroll horizontally under the frozen Name and Label
     // columns (Shift+wheel / trackpad over the list, or the scroll bar under it).
     let opt_x0 = label_x + 16.0;
-    let natural_end = opt_x0 + app.ui.project_columns.iter().filter_map(|k| COLUMNS.iter().find(|c| c.0 == k)).map(|c| c.2 + 4.0).sum::<f32>();
-    let overflow = (natural_end - rect.max.x + 4.0).max(0.0);
+    let overflow = project_cols::optional_overflow(opt_x0 + opt_total, rect.max.x);
     app.ui.project_hscroll = app.ui.project_hscroll.clamp(0.0, overflow);
     let hscroll = app.ui.project_hscroll;
     let mut x = opt_x0 - hscroll;
-    for key in app.ui.project_columns.clone() {
-        if let Some((k, l, w)) = COLUMNS.iter().find(|c| c.0 == key) {
-            cols.push((k, l, x, *w));
-            x += w + 4.0;
-        }
+    for (k, l, w) in &opt_defs {
+        cols.push((k, l, x, *w));
+        x += *w + 4.0;
     }
     let opt_clip = |r: Rect| Rect::from_min_max(pos2(r.min.x.max(opt_x0 - 4.0), r.min.y), r.max);
     if is_grid {
@@ -338,6 +349,10 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
                 }
             }
             column_menu(app, &resp);
+            if *key != "label" {
+                let displayed = if *key == "name" { name_w } else { *w };
+                column_divider(app, ui, &hp, hdr, key, hr.max.x, displayed, &t);
+            }
         }
         let hresp = ui.interact(Rect::from_min_max(pos2(x, hdr.min.y), hdr.max), egui::Id::new("proj-hdr-rest"), Sense::click());
         column_menu(app, &hresp);
@@ -519,19 +534,17 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
                 true
             };
             if !cell_edit(app, ui, &mut actions, "name", name_rect) {
+                let max_w = (name_clip.max.x - (x0 + 30.0)).max(8.0);
+                let font = Tokens::ui(12.0);
+                let color = if selected { Color32::from_gray(0x16) } else { t.text };
+                let shown = middle_name(&lp, &it.name, font.clone(), max_w);
                 // The selected item's name sits in a light cell with dark text.
                 if selected {
-                    let g = lp.layout_no_wrap(it.name.clone(), Tokens::ui(12.0), Color32::BLACK);
+                    let g = lp.layout_no_wrap(shown.clone(), font.clone(), Color32::BLACK);
                     let cell = Rect::from_min_max(pos2(x0 + 27.0, r.min.y + 1.0), pos2((x0 + 33.0 + g.size().x).min(name_clip.max.x), r.max.y - 1.0));
                     lp.with_clip_rect(name_clip.expand2(vec2(3.0, 0.0))).rect_filled(cell, 0.0, Color32::from_rgb(0xa6, 0xa6, 0xa6));
                 }
-                lp.with_clip_rect(name_clip).text(
-                    pos2(x0 + 30.0, r.center().y),
-                    Align2::LEFT_CENTER,
-                    &it.name,
-                    Tokens::ui(12.0),
-                    if selected { Color32::from_gray(0x16) } else { t.text },
-                );
+                lp.with_clip_rect(name_clip).text(pos2(x0 + 30.0, r.center().y), Align2::LEFT_CENTER, &shown, font, color);
             }
             // Label swatch: click for the label colour menu.
             let sw = Rect::from_center_size(pos2(label_x, r.center().y), vec2(10.0, 10.0));
@@ -580,12 +593,13 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
                 };
                 let align = if *key == "fps" { Align2::RIGHT_CENTER } else { Align2::LEFT_CENTER };
                 let tx = if *key == "fps" { cx + w - 6.0 } else { *cx };
-                cp.text(pos2(tx, r.center().y), align, txt, Tokens::ui(11.5), t.text_dim);
+                let shown = if matches!(*key, "path" | "comment") { middle_name(&cp, &txt, Tokens::ui(11.5), (*w - 4.0).max(8.0)) } else { txt };
+                cp.text(pos2(tx, r.center().y), align, shown, Tokens::ui(11.5), t.text_dim);
             }
             if dragging.is_some_and(|d| d != id.0) && drop_row == Some(*id) && it.is_folder() {
                 lp.rect_stroke(r.shrink(1.0), 2.0, Stroke::new(1.5, t.accent), egui::StrokeKind::Inside);
             }
-            let nresp = ui.interact(name_clip, egui::Id::new(("pname", id.0)), Sense::click_and_drag());
+            let nresp = ui.interact(name_clip, egui::Id::new(("pname", id.0)), Sense::click_and_drag()).on_hover_text(&it.name);
             app.auto.add(&format!("project.item.{}.name", id.0), name_clip, &it.name);
             resp = resp.union(nresp);
             if (resp.clicked() || info_resp.clicked()) && !resp.dragged() && !info_resp.dragged() {
@@ -1040,7 +1054,8 @@ fn show_grid(
             lp.circle_filled(tick.center(), 7.0, SELECT_BLUE);
             lp.text(tick.center(), Align2::CENTER_CENTER, "✓", Tokens::ui(10.0), Color32::WHITE);
         }
-        widgets::text_fit(lp, pos2(tile.min.x + 4.0, pad.max.y + 8.0), Align2::LEFT_CENTER, &it.name, Tokens::ui(11.0), tile.width() - 8.0, t.text);
+        let shown = middle_name(lp, &it.name, Tokens::ui(11.0), tile.width() - 8.0);
+        lp.text(pos2(tile.min.x + 4.0, pad.max.y + 8.0), Align2::LEFT_CENTER, shown, Tokens::ui(11.0), t.text);
         if let Some((w, h)) = it.dimensions() {
             widgets::text_fit(
                 lp,
@@ -1079,6 +1094,67 @@ fn show_grid(
         let sel_n = if selected { app.session.state.project_selection.len() } else { 1 };
         resp.context_menu(|ui| project_item_menu(ui, ctx, it, selected, sel_n, actions));
     }
+}
+
+fn middle_name(p: &egui::Painter, text: &str, font: egui::FontId, max_w: f32) -> String {
+    let measure = |s: &str| p.layout_no_wrap(s.to_owned(), font.clone(), Color32::WHITE).size().x;
+    project_cols::middle_ellipsis(text, max_w, measure)
+}
+
+fn persist_col_widths(app: &mut EffectcraftApp) {
+    app.session.prefs.extra.insert("projectColumnWidths".into(), project_cols::widths_to_json(&app.ui.project_col_widths));
+    app.session.save_prefs();
+}
+
+/// Drag the column-header divider to resize; double-click auto-fits to the longest cell.
+fn column_divider(app: &mut EffectcraftApp, ui: &mut egui::Ui, p: &egui::Painter, hdr: Rect, key: &str, x: f32, displayed_w: f32, t: &Tokens) {
+    let hit = Rect::from_center_size(pos2(x, hdr.center().y), vec2(project_cols::DIVIDER_HIT, hdr.height() + 4.0)).intersect(hdr.expand2(vec2(2.0, 0.0)));
+    let resp = ui.interact(hit, egui::Id::new(("proj-col-div", key.to_string())), Sense::click_and_drag());
+    app.auto.add(&format!("project.colResize.{key}"), hit, "Resize column");
+    if resp.hovered() || resp.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+        let line = Rect::from_center_size(pos2(x, hdr.center().y), vec2(2.0, hdr.height()));
+        p.rect_filled(line, 0.0, if resp.dragged() { SELECT_BLUE } else { t.focus });
+    }
+    if resp.dragged() {
+        let min = if key == "name" { project_cols::NAME_MIN } else { project_cols::COL_MIN };
+        let nw = project_cols::resize_width(displayed_w, resp.drag_delta().x, min, project_cols::COL_MAX);
+        project_cols::set_width(&mut app.ui.project_col_widths, key, nw);
+    }
+    if resp.drag_stopped() {
+        persist_col_widths(app);
+    }
+    if resp.double_clicked() {
+        auto_fit_column(app, ui, key);
+        persist_col_widths(app);
+    }
+}
+
+fn auto_fit_column(app: &mut EffectcraftApp, ui: &egui::Ui, key: &str) {
+    let font = Tokens::ui(if key == "name" { 12.0 } else { 11.5 });
+    let measure = |s: &str| ui.painter().layout_no_wrap(s.to_owned(), font.clone(), Color32::WHITE).size().x;
+    let rows = visible_rows(app);
+    let project = app.session.project.clone();
+    let mut cells: Vec<String> = Vec::new();
+    for (id, _) in &rows {
+        let Some(it) = project.item(*id) else { continue };
+        let txt = match key {
+            "name" => it.name.clone(),
+            "type" => it.type_name().to_string(),
+            "size" => file_size(it).map(fmt_size).unwrap_or_default(),
+            "duration" => it.duration().map(|d| fmt_dur(d.seconds(), it.frame_rate().map(|r| r.as_f64()).unwrap_or(30.0))).unwrap_or_default(),
+            "fps" => it.frame_rate().map(|f| format!("{:.2}", f.as_f64())).unwrap_or_default(),
+            "path" => file_path(it).to_string(),
+            "comment" => it.comment.clone(),
+            _ => String::new(),
+        };
+        cells.push(txt);
+    }
+    let header = COLUMNS.iter().find(|c| c.0 == key).map(|c| c.1).unwrap_or("Name");
+    let min = if key == "name" { project_cols::NAME_MIN } else { project_cols::COL_MIN };
+    let refs: Vec<&str> = cells.iter().map(String::as_str).collect();
+    let w = project_cols::auto_fit_width(header, refs, measure, min, project_cols::COL_MAX);
+    project_cols::set_width(&mut app.ui.project_col_widths, key, w);
 }
 
 /// The column header's context menu: show or hide the optional columns.

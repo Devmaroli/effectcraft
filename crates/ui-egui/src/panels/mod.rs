@@ -34,6 +34,7 @@ pub mod panel_kit;
 pub mod path_vr_panels;
 pub mod precomp;
 pub mod project;
+pub mod project_cols;
 pub mod project_select;
 pub mod properties;
 pub mod puppet_tool;

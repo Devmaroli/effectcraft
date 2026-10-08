@@ -608,6 +608,10 @@ pub struct UiState {
     /// `duration`, `path`, `comment`); toggled from the column header's context menu.
     #[serde(default = "default_project_columns")]
     pub project_columns: Vec<String>,
+    /// User-resized Project panel column widths in points (`name`, `type`, `size`, …).
+    /// Restored from Settings on launch; leftover panel width still goes to Name first.
+    #[serde(default)]
+    pub project_col_widths: BTreeMap<String, f32>,
     /// Horizontal scroll of the Project panel's optional columns (Name and Label stay put).
     #[serde(default)]
     pub project_hscroll: f32,
@@ -722,6 +726,7 @@ impl Default for UiState {
             project_hscroll: 0.0,
             project_scroll: 0.0,
             project_columns: default_project_columns(),
+            project_col_widths: BTreeMap::new(),
             project_view: ProjectView::List,
             project_thumb_size: default_project_thumb_size(),
             project_grid_folder: None,

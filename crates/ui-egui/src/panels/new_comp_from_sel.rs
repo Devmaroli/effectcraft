@@ -206,7 +206,7 @@ pub fn show(app: &mut EffectcraftApp, ctx: &egui::Context, t: &Tokens) {
             ui.label(egui::RichText::new(hint).color(t.text_dim).size(11.5));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let create_lbl = if d.single || create_n <= 1 { "Create Comp".into() } else { format!("Create {create_n} Comps") };
-                let btn = egui::Button::new(egui::RichText::new(create_lbl).color(Color32::WHITE)).fill(SELECT_BLUE).min_size(vec2(128.0, 28.0));
+                let btn = egui::Button::new(egui::RichText::new(create_lbl).color(Color32::WHITE)).fill(SELECT_BLUE).min_size(vec2(168.0, 28.0));
                 let r = ui.add(btn);
                 app.auto.add("dialog.ncs.ok", r.rect, "Create");
                 if r.clicked() {
