@@ -259,16 +259,32 @@ fn paint_rail(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect, alerts: &
 fn sorter_tab(app: &mut EffectcraftApp, ui: &mut egui::Ui, alerts: &[PanelAlert]) {
     let hits = app.session.state.screen.sorter.hits.len();
     heading(ui, "Size Sorter", if hits == 0 { "Paste-to-size sorter" } else { "Result" });
-    ui.label(RichText::new("Paste screen names or pixel sizes, one per line, in any order.").small().color(Color32::from_gray(140)));
-    let mut paste = app.session.state.screen.paste.clone();
-    let paste_rows = if hits == 0 { 8 } else { 3 };
-    let r = ui.add(egui::TextEdit::multiline(&mut paste).desired_width(f32::INFINITY).desired_rows(paste_rows).hint_text("1. Jahra Prime\n2. Al Salam Sync"));
-    app.auto.add("screenSuite.paste", r.rect, "paste");
-    if r.changed() {
-        app.session.state.screen.paste = paste;
+    let paste_open = hits == 0 || ui.memory(|m| m.data.get_temp::<bool>(egui::Id::new("screenSuite.pasteOpen")).unwrap_or(false));
+    if hits == 0 {
+        ui.label(RichText::new("Paste screen names or pixel sizes, one per line, in any order.").small().color(Color32::from_gray(140)));
+    } else {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(format!("{} lines pasted", app.session.state.screen.paste.lines().filter(|l| !l.trim().is_empty()).count())).small().color(MUTED));
+            let r = ui.selectable_label(paste_open, if paste_open { "Hide paste" } else { "Edit paste" });
+            app.auto.add("screenSuite.paste.toggle", r.rect, "edit paste");
+            if r.clicked() {
+                ui.memory_mut(|m| m.data.insert_temp(egui::Id::new("screenSuite.pasteOpen"), !paste_open));
+            }
+        });
     }
-    if r.lost_focus() && sorted_ready(app) {
-        exec(app, "screen.sorter.sort", sort_body(app));
+    if paste_open {
+        let mut paste = app.session.state.screen.paste.clone();
+        let paste_rows = if hits == 0 { 8 } else { 4 };
+        let r = ui.add(egui::TextEdit::multiline(&mut paste).desired_width(f32::INFINITY).desired_rows(paste_rows).hint_text("1. Jahra Prime\n2. Al Salam Sync"));
+        app.auto.add("screenSuite.paste", r.rect, "paste");
+        if r.changed() {
+            app.session.state.screen.paste = paste;
+        }
+        if r.lost_focus() && sorted_ready(app) {
+            exec(app, "screen.sorter.sort", sort_body(app));
+        }
+    } else {
+        app.auto.add("screenSuite.paste", ui.min_rect(), "paste");
     }
     ui.add_space(4.0);
     filters_block(app, ui);
