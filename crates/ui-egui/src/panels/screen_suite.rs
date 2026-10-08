@@ -2,7 +2,7 @@
 
 use effectcraft_screens::sorter::{hidden_row_count, row_size_text};
 use effectcraft_screens::{AlertLevel, CompNameFrom, JobMode, MatchMode, PanelAlert, collect_alerts, default_send_preset, tab_alert_count};
-use egui::{Align, Color32, CornerRadius, Layout, Rect, RichText, Sense, Stroke, Vec2};
+use egui::{Align, Color32, CornerRadius, Layout, Rect, RichText, Sense, Stroke, Vec2, pos2};
 use serde_json::{Value, json};
 
 use crate::EffectcraftApp;
@@ -64,6 +64,25 @@ fn pill(ui: &mut egui::Ui, text: &str, fill: Color32, fg: Color32) {
     egui::Frame::new().fill(fill).corner_radius(CornerRadius::same(99)).inner_margin(egui::Margin::symmetric(8, 2)).show(ui, |ui| {
         ui.label(RichText::new(text).size(11.0).color(fg).strong());
     });
+}
+
+/// Wrapping chip rows must not inherit the ScrollArea's leftover height (that leaves a
+/// huge gap and pushes the Send card off screen).
+fn wrap_chips(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    let w = ui.available_width().max(1.0);
+    let h = 52.0;
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, h), Sense::hover());
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(Layout::left_to_right(Align::Min).with_main_wrap(true)));
+    child.set_clip_rect(rect.intersect(ui.clip_rect()));
+    add(&mut child);
+}
+
+fn table_cell(ui: &mut egui::Ui, row: Rect, x: f32, w: f32, layout: Layout, add: impl FnOnce(&mut egui::Ui)) {
+    let cell = Rect::from_min_size(pos2(row.min.x + x, row.min.y), Vec2::new(w, row.height()));
+    let inner = cell.shrink2(Vec2::new(4.0, 1.0));
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(layout));
+    child.set_clip_rect(cell.intersect(ui.clip_rect()));
+    add(&mut child);
 }
 
 fn primary_btn(app: &mut EffectcraftApp, ui: &mut egui::Ui, id: &str, label: &str) -> bool {
@@ -264,7 +283,9 @@ fn sorter_tab(app: &mut EffectcraftApp, ui: &mut egui::Ui, alerts: &[PanelAlert]
         ui.label(RichText::new("Paste screen names or pixel sizes, one per line, in any order.").small().color(Color32::from_gray(140)));
     } else {
         ui.horizontal(|ui| {
-            ui.label(RichText::new(format!("{} lines pasted", app.session.state.screen.paste.lines().filter(|l| !l.trim().is_empty()).count())).small().color(MUTED));
+            ui.label(
+                RichText::new(format!("{} lines pasted", app.session.state.screen.paste.lines().filter(|l| !l.trim().is_empty()).count())).small().color(MUTED),
+            );
             let r = ui.selectable_label(paste_open, if paste_open { "Hide paste" } else { "Edit paste" });
             app.auto.add("screenSuite.paste.toggle", r.rect, "edit paste");
             if r.clicked() {
@@ -275,7 +296,8 @@ fn sorter_tab(app: &mut EffectcraftApp, ui: &mut egui::Ui, alerts: &[PanelAlert]
     if paste_open {
         let mut paste = app.session.state.screen.paste.clone();
         let paste_rows = if hits == 0 { 8 } else { 4 };
-        let r = ui.add(egui::TextEdit::multiline(&mut paste).desired_width(f32::INFINITY).desired_rows(paste_rows).hint_text("1. Jahra Prime\n2. Al Salam Sync"));
+        let r =
+            ui.add(egui::TextEdit::multiline(&mut paste).desired_width(f32::INFINITY).desired_rows(paste_rows).hint_text("1. Jahra Prime\n2. Al Salam Sync"));
         app.auto.add("screenSuite.paste", r.rect, "paste");
         if r.changed() {
             app.session.state.screen.paste = paste;
@@ -305,7 +327,7 @@ fn sorter_tab(app: &mut EffectcraftApp, ui: &mut egui::Ui, alerts: &[PanelAlert]
     let associated = sorter.hits.iter().filter(|h| h.reason.contains("Associated")).count();
     let dups = sorter.flags.iter().filter(|f| f.kind == "duplicate").count();
     let review = sorter.flags.iter().filter(|f| f.kind == "lowConfidence" || f.kind == "ambiguous" || f.kind == "unmatched").count();
-    ui.horizontal_wrapped(|ui| {
+    wrap_chips(ui, |ui| {
         pill(ui, &format!("Pasted {}", sorter.hits.len()), Color32::from_rgb(0x33, 0x33, 0x33), Color32::from_gray(210));
         pill(
             ui,
@@ -518,7 +540,7 @@ fn filters_block(app: &mut EffectcraftApp, ui: &mut egui::Ui) {
         + usize::from(!cat.is_empty())
         + usize::from(cleanup)
         + usize::from(flexible);
-    ui.horizontal_wrapped(|ui| {
+    wrap_chips(ui, |ui| {
         let r = ui.selectable_label(open, if open { "▾ Filters" } else { "▸ Filters" });
         app.auto.add("screenSuite.filters.toggle", r.rect, "Filters");
         if r.clicked() {
@@ -1095,72 +1117,90 @@ pub fn show_library(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
 }
 
 fn paint_library_table(app: &mut EffectcraftApp, ui: &mut egui::Ui, merged: &[Value], issues: &[Value], issues_only: bool, search: &str) {
-    let avail = ui.available_width().max(420.0);
-    let w_name = 168.0;
-    let w_w = 56.0;
-    let w_h = 56.0;
-    let w_group = 72.0;
-    let w_also = 72.0;
-    let w_check = (avail - w_name - w_w - w_h - w_group - w_also - 20.0).max(120.0);
-    let header = |ui: &mut egui::Ui, w: f32, t: &str| {
-        ui.allocate_ui_with_layout(Vec2::new(w, 18.0), Layout::left_to_right(Align::Center), |ui| {
-            ui.label(RichText::new(t).small().strong().color(MUTED));
+    let avail = ui.available_width().max(520.0);
+    let w_name = 200.0;
+    let w_w = 72.0;
+    let w_h = 72.0;
+    let w_group = 100.0;
+    let w_also = 118.0;
+    let w_check = (avail - w_name - w_w - w_h - w_group - w_also).max(160.0);
+    let xs = [0.0, w_name, w_name + w_w, w_name + w_w + w_h, w_name + w_w + w_h + w_group, w_name + w_w + w_h + w_group + w_also];
+    let ws = [w_name, w_w, w_h, w_group, w_also, w_check];
+    let (hdr, _) = ui.allocate_exact_size(Vec2::new(avail, 22.0), Sense::hover());
+    ui.painter().rect_filled(hdr, 0.0, Color32::from_rgb(0x18, 0x18, 0x18));
+    for (i, title) in ["Name", "Width", "Height", "Group", "Also in", "Check"].iter().enumerate() {
+        let align = if i == 1 || i == 2 { Layout::right_to_left(Align::Center) } else { Layout::left_to_right(Align::Center) };
+        table_cell(ui, hdr, xs[i], ws[i], align, |ui| {
+            ui.label(RichText::new(*title).small().strong().color(MUTED));
         });
-    };
-    ui.horizontal(|ui| {
-        header(ui, w_name, "Name");
-        header(ui, w_w, "Width");
-        header(ui, w_h, "Height");
-        header(ui, w_group, "Group");
-        header(ui, w_also, "Also in");
-        header(ui, w_check, "Check");
-    });
-    ui.add(egui::Separator::default().spacing(4.0));
-    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        for (i, row) in merged.iter().enumerate() {
+    }
+    ui.add(egui::Separator::default().spacing(2.0));
+    let visible: Vec<(usize, &Value)> = merged
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| {
             let name = row.get("name").and_then(Value::as_str).unwrap_or("");
             if !search.is_empty() && !effectcraft_screens::normalize(name).contains(search) {
-                continue;
+                return false;
             }
+            if issues_only && issues.iter().all(|iss| iss.get("row").and_then(Value::as_str) != Some(name)) {
+                return false;
+            }
+            true
+        })
+        .collect();
+    egui::ScrollArea::vertical().id_salt("screenLibrary.table").auto_shrink([false, false]).show(ui, |ui| {
+        for (vis, (i, row)) in visible.into_iter().enumerate() {
+            let name = row.get("name").and_then(Value::as_str).unwrap_or("");
             let issue = issues.iter().find(|iss| iss.get("row").and_then(Value::as_str) == Some(name));
-            if issues_only && issue.is_none() {
-                continue;
-            }
             let w = row.get("width").and_then(Value::as_u64).unwrap_or(0);
             let h = row.get("height").and_then(Value::as_u64).unwrap_or(0);
             let group = row.get("group").and_then(Value::as_str).unwrap_or("");
             let sm = row.get("inManager").and_then(Value::as_bool).unwrap_or(false);
             let sz = row.get("inSizemaster").and_then(Value::as_bool).unwrap_or(false);
             let sa = row.get("inAdapter").and_then(Value::as_bool).unwrap_or(false);
-            let row_h = if issue.is_some() { 40.0 } else { 26.0 };
-            let (rect, _) = ui.allocate_exact_size(Vec2::new(avail, row_h), Sense::hover());
-            if issue.is_some() {
-                ui.painter().rect_filled(rect, 4.0, Color32::from_rgb(0x2b, 0x18, 0x14));
-            }
-            let mut row_ui = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(Vec2::new(4.0, 2.0))).layout(Layout::left_to_right(Align::Center)));
-            row_ui.allocate_ui_with_layout(Vec2::new(w_name, row_h - 4.0), Layout::left_to_right(Align::Center), |ui| {
+            let row_h = 28.0;
+            let (rect, resp) = ui.allocate_exact_size(Vec2::new(avail, row_h), Sense::hover());
+            let fill = if issue.is_some() {
+                Color32::from_rgb(0x2b, 0x18, 0x14)
+            } else if resp.hovered() {
+                ROW_HOVER
+            } else if vis % 2 == 1 {
+                Color32::from_rgb(0x1c, 0x1c, 0x1c)
+            } else {
+                Color32::TRANSPARENT
+            };
+            ui.painter().rect_filled(rect, 0.0, fill);
+            table_cell(ui, rect, xs[0], ws[0], Layout::left_to_right(Align::Center), |ui| {
                 ui.label(RichText::new(name).color(if issue.is_some() { Color32::from_rgb(0xff, 0x9b, 0x94) } else { Color32::from_gray(230) }));
             });
-            row_ui.allocate_ui_with_layout(Vec2::new(w_w, row_h - 4.0), Layout::left_to_right(Align::Center), |ui| {
-                ui.label(RichText::new(format!("{w}")).small());
+            table_cell(ui, rect, xs[1], ws[1], Layout::right_to_left(Align::Center), |ui| {
+                ui.label(RichText::new(format!("{w}")).small().color(Color32::from_gray(210)));
             });
-            row_ui.allocate_ui_with_layout(Vec2::new(w_h, row_h - 4.0), Layout::left_to_right(Align::Center), |ui| {
-                ui.label(RichText::new(format!("{h}")).small());
+            table_cell(ui, rect, xs[2], ws[2], Layout::right_to_left(Align::Center), |ui| {
+                ui.label(RichText::new(format!("{h}")).small().color(Color32::from_gray(210)));
             });
-            row_ui.allocate_ui_with_layout(Vec2::new(w_group, row_h - 4.0), Layout::left_to_right(Align::Center), |ui| {
-                ui.label(RichText::new(group).small().color(MUTED));
+            table_cell(ui, rect, xs[3], ws[3], Layout::left_to_right(Align::Center), |ui| {
+                if !group.is_empty() {
+                    pill(ui, group, Color32::from_rgb(0x28, 0x28, 0x28), MUTED);
+                }
             });
-            row_ui.allocate_ui_with_layout(Vec2::new(w_also, row_h - 4.0), Layout::left_to_right(Align::Center), |ui| {
-                ui.label(
-                    RichText::new(format!("{}{}{}", if sm { "SM " } else { "" }, if sz { "SzM " } else { "" }, if sa { "SA" } else { "" }))
-                        .small()
-                        .color(MUTED),
-                );
+            table_cell(ui, rect, xs[4], ws[4], Layout::left_to_right(Align::Center), |ui| {
+                if sm {
+                    pill(ui, "SM", Color32::from_rgb(0x16, 0x30, 0x4f), Color32::from_rgb(0x79, 0xb4, 0xff));
+                }
+                if sz {
+                    pill(ui, "SzM", Color32::from_rgb(0x16, 0x3d, 0x24), Color32::from_rgb(0x5f, 0xd5, 0x85));
+                }
+                if sa {
+                    pill(ui, "SA", Color32::from_rgb(0x2a, 0x21, 0x3a), Color32::from_rgb(0xc4, 0xb5, 0xfd));
+                }
             });
-            row_ui.allocate_ui_with_layout(Vec2::new(w_check, row_h - 4.0), Layout::left_to_right(Align::Center), |ui| {
+            table_cell(ui, rect, xs[5], ws[5], Layout::left_to_right(Align::Center), |ui| {
                 if let Some(iss) = issue {
-                    let msg = iss.get("message").and_then(Value::as_str).unwrap_or("");
-                    ui.label(RichText::new(msg).small().color(Color32::from_rgb(0xf5, 0xb8, 0x4a)));
+                    let msg = iss.get("message").and_then(Value::as_str).unwrap_or("Issue");
+                    let short = msg.split('·').next().unwrap_or(msg).trim();
+                    pill(ui, short, Color32::from_rgb(0x3a, 0x27, 0x12), Color32::from_rgb(0xfd, 0xba, 0x74));
                     if let Some(fix) = iss.get("fix").and_then(Value::as_str).filter(|s| !s.is_empty()) {
                         let label = iss.get("fixLabel").and_then(Value::as_str).unwrap_or("Fix");
                         if ui.button(label).clicked() {
@@ -1168,6 +1208,8 @@ fn paint_library_table(app: &mut EffectcraftApp, ui: &mut egui::Ui, merged: &[Va
                             exec(app, "screen.library.edit", json!({"fix": id, "value": fix}));
                         }
                     }
+                } else {
+                    ui.colored_label(Color32::from_rgb(0x5f, 0xd5, 0x85), "✓");
                 }
             });
             app.auto.add(&format!("screenLibrary.row.{i}"), rect, name);

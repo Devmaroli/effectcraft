@@ -839,7 +839,7 @@ pub fn frontend(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str, p: Valu
                 let screen = ctx.content_rect();
                 let rect = if panel == PanelKind::ScreenLibrary {
                     let c = screen.center();
-                    [c.x - 490.0, c.y - 310.0, 980.0, 620.0]
+                    [c.x - 620.0, c.y - 380.0, 1240.0, 760.0]
                 } else {
                     crate::dock_ui::default_float_rect(screen)
                 };
