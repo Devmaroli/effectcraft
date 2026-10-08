@@ -1160,7 +1160,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(
             "screen.library.import",
             "Import a Screen Library JSON file",
-            ["Composition", "Screen Suite"],
+            [],
             None,
             "{json?, path?, mode?: merge|replace}",
             always,
