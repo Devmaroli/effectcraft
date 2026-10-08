@@ -656,9 +656,7 @@ impl Psd {
                 let gamma = r.f32()? as f64;
                 l.adjustment = Some(Adjustment::Exposure { exposure, offset, gamma });
             }
-            b"curv" | b"blnc" | b"post" | b"thrs" | b"selc" | b"mixr" | b"phfl" | b"vibA" | b"blwh" | b"grdm" | b"clrL"
-                if l.adjustment.is_none() =>
-            {
+            b"curv" | b"blnc" | b"post" | b"thrs" | b"selc" | b"mixr" | b"phfl" | b"vibA" | b"blwh" | b"grdm" | b"clrL" if l.adjustment.is_none() => {
                 l.adjustment = Some(Adjustment::Other(String::from_utf8_lossy(key).into_owned()));
             }
             b"SoLd" | b"SoLE" => {
