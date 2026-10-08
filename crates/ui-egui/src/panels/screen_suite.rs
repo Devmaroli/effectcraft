@@ -73,24 +73,16 @@ fn pill(ui: &mut egui::Ui, text: &str, fill: Color32, fg: Color32) {
 }
 
 /// Wrapping chip rows must not inherit the ScrollArea's leftover height (that leaves a
-/// huge gap and pushes the Send card off screen). Pills themselves never wrap. Height is
-/// measured so one row stays ~22px and a wrap to two rows still clips instead of overlapping.
+/// huge gap and pushes the Send card off screen). Pills themselves never wrap. Two 20px
+/// rows (44px) is enough at a narrow dock; extra space on a wide panel is only ~12px.
 fn wrap_chips(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
     let w = ui.available_width().max(1.0);
-    let id = ui.id().with(("wrap_chips_h", ui.cursor().min.x.to_bits(), ui.cursor().min.y.to_bits()));
-    let h = ui.memory(|m| m.data.get_temp::<f32>(id)).unwrap_or(22.0).clamp(20.0, 52.0);
+    let h = 44.0;
     let (rect, _) = ui.allocate_exact_size(Vec2::new(w, h), Sense::hover());
-    // Taller measure rect so a second chip row can wrap; paint is clipped to `rect`.
-    let measure = Rect::from_min_size(rect.min, Vec2::new(w, 52.0));
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(measure).layout(Layout::left_to_right(Align::Center).with_main_wrap(true)));
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(Layout::left_to_right(Align::Min).with_main_wrap(true)));
     child.set_clip_rect(rect.intersect(ui.clip_rect()));
     child.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
     add(&mut child);
-    let used = child.min_rect().height().clamp(20.0, 52.0);
-    if (used - h).abs() > 0.5 {
-        ui.memory_mut(|m| m.data.insert_temp(id, used));
-        ui.ctx().request_repaint();
-    }
 }
 
 fn table_cell(ui: &mut egui::Ui, row: Rect, x: f32, w: f32, layout: Layout, add: impl FnOnce(&mut egui::Ui)) {
