@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::combiner::accepted_sizes_for;
 use crate::fuzzy::{similarity, token_score};
 use crate::inventory::{Library, Screen, cover_export_name, is_al_salam_sync, is_avenues_entrance, is_palm_trees, is_thuraya, is_yaal_slayel, size_mode_alias};
 use crate::normalize::{compact_size, format_size, normalize, parse_pixel_size, split_paste};
@@ -109,6 +110,17 @@ pub struct SorterRow {
     /// Filters only hide rows. Hidden rows are still sent.
     #[serde(default)]
     pub hidden: bool,
+    /// Combined deliverable when it differs from the face (Al Salam 3072×576, Marina 960×960).
+    #[serde(default)]
+    pub prod_width: u32,
+    #[serde(default)]
+    pub prod_height: u32,
+    /// Covers cell: `← 3 screens`, `← 1 screen`, `Left + Right`, `4 screens`.
+    #[serde(default)]
+    pub covers_label: String,
+    /// Library name when the Entry column shows the pasted name instead.
+    #[serde(default)]
+    pub library_hint: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -206,7 +218,7 @@ pub fn sort_lines(lib: &Library, paste: &str, cleanup: bool, mode: MatchMode, fi
             });
         }
     }
-    let mut rows = group_rows(&hits);
+    let mut rows = group_rows(lib, &hits);
     for row in &mut rows {
         row.hidden = !filters.is_empty() && !row_visible(lib, row, filters);
     }
@@ -217,7 +229,7 @@ pub fn sort_lines(lib: &Library, paste: &str, cleanup: bool, mode: MatchMode, fi
     SorterResult { rows, hits, unmatched, flags, paste_names_by_size, paste_names_screen_specific }
 }
 
-fn group_rows(hits: &[SorterHit]) -> Vec<SorterRow> {
+fn group_rows(lib: &Library, hits: &[SorterHit]) -> Vec<SorterRow> {
     let mut groups: Vec<((u32, u32, String), Vec<&SorterHit>)> = Vec::new();
     for h in hits {
         let key = group_key(h);
@@ -231,24 +243,63 @@ fn group_rows(hits: &[SorterHit]) -> Vec<SorterRow> {
     groups
         .into_iter()
         .map(|((w, h, _), items)| {
-            let names: Vec<String> = items.iter().map(|x| x.screen.clone()).collect();
-            let use_name = cover_export_name((w, h), &names);
+            let library_names: Vec<String> = items.iter().map(|x| x.screen.clone()).collect();
+            let pasted: Vec<String> = items.iter().map(|x| if x.line.is_empty() { x.screen.clone() } else { x.line.clone() }).collect();
+            let use_name = cover_export_name((w, h), &pasted);
             let conf = items.iter().map(|x| (x.score * 100.0).round() as u32).max().unwrap_or(0);
             let reason = items.first().map(|x| x.reason.clone()).unwrap_or_default();
+            let (prod_width, prod_height, covers_label) = production_covers(lib, w, h, &library_names, items.len());
+            let library_hint = library_names.first().filter(|n| normalize(n) != normalize(&use_name)).cloned().unwrap_or_default();
             SorterRow {
                 size: format_size(w, h),
                 width: w,
                 height: h,
                 use_name,
-                covers: names,
+                covers: pasted,
                 count: items.len(),
                 confidence: conf,
                 reason,
                 needs_review: conf < 68,
                 hidden: false,
+                prod_width,
+                prod_height,
+                covers_label,
+                library_hint,
             }
         })
         .collect()
+}
+
+/// Face size vs combined deliverable, and the Covers pill text.
+fn production_covers(lib: &Library, face_w: u32, face_h: u32, names: &[String], pasted_count: usize) -> (u32, u32, String) {
+    let probe = names.first().map(String::as_str).unwrap_or("");
+    let accepted = accepted_sizes_for(lib, probe);
+    let combo = accepted.iter().filter(|a| a.width != face_w || a.height != face_h).max_by_key(|a| a.width.saturating_mul(a.height));
+    if let Some(c) = combo {
+        let label = if is_al_salam_sync(probe) {
+            "Left + Right".into()
+        } else if c.copies > 1 {
+            format!("{} {}", c.copies, if c.copies == 1 { "screen" } else { "screens" })
+        } else {
+            screens_pill(pasted_count)
+        };
+        return (c.width, c.height, label);
+    }
+    (face_w, face_h, screens_pill(pasted_count))
+}
+
+/// `← 1 screen` / `← 3 screens`.
+pub fn screens_pill(n: usize) -> String {
+    format!("← {n} {}", if n == 1 { "screen" } else { "screens" })
+}
+
+/// Entry · size second line: `1920×1080` or `1536×576 → 3072×576`.
+pub fn row_size_text(row: &SorterRow) -> String {
+    if row.prod_width > 0 && (row.prod_width != row.width || row.prod_height != row.height) {
+        format!("{} → {}", format_size(row.width, row.height), format_size(row.prod_width, row.prod_height))
+    } else {
+        row.size.clone()
+    }
 }
 
 fn group_key(h: &SorterHit) -> (u32, u32, String) {

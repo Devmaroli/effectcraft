@@ -32,7 +32,7 @@ impl DupWarning {
     pub fn message(&self) -> String {
         let piece = if self.extra_pieces == 1 { "piece" } else { "pieces" };
         format!(
-            "Look out — this combined composition grew beyond the normal size for this screen. Expected {ew}×{eh}, actual {aw}×{ah} ({n} extra {piece} stacked vertically).",
+            "This combined composition grew beyond the normal size for this screen. Expected {ew}×{eh}, actual {aw}×{ah} ({n} extra {piece} stacked vertically).",
             ew = self.expected_width,
             eh = self.expected_height,
             aw = self.actual_width,

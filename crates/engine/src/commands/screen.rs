@@ -930,14 +930,29 @@ fn library_redo(s: &mut Session, _: &Value) -> Result<Value> {
     library_json(s, &Value::Null)
 }
 
+fn library_import_text(p: &Value, cmd: &str) -> Result<String> {
+    if let Some(path) = str_p(p, "path").filter(|s| !s.is_empty()) {
+        if path.contains("..") {
+            return Err(bad(cmd, "path must not contain '..'"));
+        }
+        return std::fs::read_to_string(path).map_err(|e| bad(cmd, format!("could not read {path}: {e}")));
+    }
+    str_p(p, "json").filter(|s| !s.is_empty()).map(str::to_string).ok_or_else(|| bad(cmd, "missing `json` or `path`"))
+}
+
 fn library_import_preview(s: &mut Session, p: &Value) -> Result<Value> {
-    let text = str_p(p, "json").ok_or_else(|| bad("screen.library.importPreview", "missing `json`"))?;
+    let text = library_import_text(p, "screen.library.importPreview")?;
     let mode = str_p(p, "mode").unwrap_or("merge");
-    let incoming = library_edit::parse_library_json(text).map_err(|e| bad("screen.library.importPreview", &e))?;
+    let incoming = library_edit::parse_library_json(&text).map_err(|e| bad("screen.library.importPreview", &e))?;
     let preview = library_edit::preview_import(&session_lib(s), &incoming, mode);
     s.state.screen.import_preview = Some(preview.clone());
     s.state.screen.import_incoming = Some(incoming);
     serde_json::to_value(preview).map_err(|e| EngineError::Other(e.to_string()))
+}
+
+fn library_import(s: &mut Session, p: &Value) -> Result<Value> {
+    library_import_preview(s, p)?;
+    library_import_apply(s, p)
 }
 
 fn library_import_apply(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1138,9 +1153,18 @@ pub fn specs() -> Vec<CommandSpec> {
             "Preview a Screen Library JSON import",
             [],
             None,
-            "{json, mode?: merge|replace}",
+            "{json?, path?, mode?: merge|replace}",
             always,
             library_import_preview
+        ),
+        cmd!(
+            "screen.library.import",
+            "Import a Screen Library JSON file",
+            ["Composition", "Screen Suite"],
+            None,
+            "{json?, path?, mode?: merge|replace}",
+            always,
+            library_import
         ),
         cmd!(
             "screen.library.importApply",

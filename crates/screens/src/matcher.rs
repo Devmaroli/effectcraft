@@ -60,7 +60,7 @@ pub fn check_comps(lib: &Library, required: &[String], comps: &[CompProbe], mode
                 let Some((ew, eh, extra)) = extra_stacked(&accepted, c.width, c.height) else { continue };
                 let piece = if extra == 1 { "piece" } else { "pieces" };
                 let msg = format!(
-                    "Look out — “{}” is larger than the normal size for this screen. Expected {ew}×{eh}, actual {}×{} ({extra} extra {piece} stacked vertically).",
+                    "“{}” is larger than the normal size for this screen. Expected {ew}×{eh}, actual {}×{} ({extra} extra {piece} stacked vertically).",
                     c.name, c.width, c.height
                 );
                 oversized.push(msg.clone());
