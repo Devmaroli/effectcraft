@@ -241,9 +241,13 @@ fn screen_suite_booking_build_and_extra_stack_warning() {
 }
 
 fn mockup_dock() -> DockNode {
+    mockup_dock_width(520.0)
+}
+
+fn mockup_dock_width(panel: f32) -> DockNode {
     DockNode::Split {
         vertical: false,
-        size: SplitSize::FixedB(520.0),
+        size: SplitSize::FixedB(panel),
         a: Box::new(DockNode::Split {
             vertical: true,
             size: SplitSize::Ratio(0.58),
@@ -280,8 +284,13 @@ fn screen_suite_v2_snapshots() {
     h.state_mut().ui.dock = mockup_dock();
     h.state_mut().ui.maximized = None;
     h.state_mut().ui.focused = PanelKind::ScreenSuite;
-    h.run_steps(4);
+    h.run_steps(6);
     h.render().expect("render").save(format!("{dir}/v2-step2-size-sorter.png")).unwrap();
+
+    h.state_mut().ui.dock = mockup_dock_width(340.0);
+    h.state_mut().ui.maximized = None;
+    h.run_steps(6);
+    h.render().expect("render").save(format!("{dir}/v2-step2-size-sorter-narrow.png")).unwrap();
 
     h.state_mut().session.execute("screen.sorter.send", json!({"screenSpecific": false})).unwrap();
     h.state_mut().session.execute("screen.manager.apply", json!({"prefix": "SpringSale", "suffix": "EN"})).unwrap();

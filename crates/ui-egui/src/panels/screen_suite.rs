@@ -2,7 +2,7 @@
 
 use effectcraft_screens::sorter::{hidden_row_count, row_size_text};
 use effectcraft_screens::{AlertLevel, CompNameFrom, JobMode, MatchMode, PanelAlert, collect_alerts, default_send_preset, tab_alert_count};
-use egui::{Align, Color32, CornerRadius, Layout, Rect, RichText, Sense, Stroke, Vec2, pos2};
+use egui::{Align, Color32, CornerRadius, FontId, Layout, Rect, RichText, Sense, Stroke, Vec2, pos2};
 use serde_json::{Value, json};
 
 use crate::EffectcraftApp;
@@ -60,21 +60,37 @@ fn fg_for(level: AlertLevel) -> Color32 {
     }
 }
 
+/// Compact single-line pill (~20px). Painted at an exact size so wrapping layouts
+/// cannot squeeze the text onto two lines and balloon `CornerRadius(99)` into an oval.
 fn pill(ui: &mut egui::Ui, text: &str, fill: Color32, fg: Color32) {
-    egui::Frame::new().fill(fill).corner_radius(CornerRadius::same(99)).inner_margin(egui::Margin::symmetric(8, 2)).show(ui, |ui| {
-        ui.label(RichText::new(text).size(11.0).color(fg).strong());
-    });
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), FontId::proportional(10.5), fg);
+    let pad_x = 7.0;
+    let size = Vec2::new((galley.size().x + pad_x * 2.0).ceil().max(16.0), 20.0);
+    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+    ui.painter().rect_filled(rect, CornerRadius::same(99), fill);
+    let pos = pos2(rect.center().x - galley.size().x * 0.5, rect.center().y - galley.size().y * 0.5);
+    ui.painter().galley(pos, galley, fg);
 }
 
 /// Wrapping chip rows must not inherit the ScrollArea's leftover height (that leaves a
-/// huge gap and pushes the Send card off screen).
+/// huge gap and pushes the Send card off screen). Pills themselves never wrap. Height is
+/// measured so one row stays ~22px and a wrap to two rows still clips instead of overlapping.
 fn wrap_chips(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
     let w = ui.available_width().max(1.0);
-    let h = 52.0;
+    let id = ui.id().with(("wrap_chips_h", ui.cursor().min.x.to_bits(), ui.cursor().min.y.to_bits()));
+    let h = ui.memory(|m| m.data.get_temp::<f32>(id)).unwrap_or(22.0).clamp(20.0, 52.0);
     let (rect, _) = ui.allocate_exact_size(Vec2::new(w, h), Sense::hover());
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(Layout::left_to_right(Align::Min).with_main_wrap(true)));
+    // Taller measure rect so a second chip row can wrap; paint is clipped to `rect`.
+    let measure = Rect::from_min_size(rect.min, Vec2::new(w, 52.0));
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(measure).layout(Layout::left_to_right(Align::Center).with_main_wrap(true)));
     child.set_clip_rect(rect.intersect(ui.clip_rect()));
+    child.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
     add(&mut child);
+    let used = child.min_rect().height().clamp(20.0, 52.0);
+    if (used - h).abs() > 0.5 {
+        ui.memory_mut(|m| m.data.insert_temp(id, used));
+        ui.ctx().request_repaint();
+    }
 }
 
 fn table_cell(ui: &mut egui::Ui, row: Rect, x: f32, w: f32, layout: Layout, add: impl FnOnce(&mut egui::Ui)) {
@@ -82,6 +98,7 @@ fn table_cell(ui: &mut egui::Ui, row: Rect, x: f32, w: f32, layout: Layout, add:
     let inner = cell.shrink2(Vec2::new(4.0, 1.0));
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(layout));
     child.set_clip_rect(cell.intersect(ui.clip_rect()));
+    child.spacing_mut().item_spacing = Vec2::new(4.0, 1.0);
     add(&mut child);
 }
 
@@ -338,8 +355,12 @@ fn sorter_tab(app: &mut EffectcraftApp, ui: &mut egui::Ui, alerts: &[PanelAlert]
         pill(ui, &format!("Unique sizes {}", sorter.rows.len()), Color32::from_rgb(0x16, 0x30, 0x4f), Color32::from_rgb(0x79, 0xb4, 0xff));
         pill(ui, &format!("Associated {associated}"), Color32::from_rgb(0x2a, 0x21, 0x3a), Color32::from_rgb(0xc4, 0xb5, 0xfd));
         pill(ui, &format!("Duplicates {dups}"), Color32::from_rgb(0x3a, 0x27, 0x12), Color32::from_rgb(0xfd, 0xba, 0x74));
-        pill(ui, &format!("Need review {review}"), Color32::from_rgb(0x3a, 0x2a, 0x10), Color32::from_rgb(0xf5, 0xd0, 0x76));
-        pill(ui, &format!("Unmatched {}", sorter.unmatched.len()), Color32::from_rgb(0x4a, 0x1b, 0x18), Color32::from_rgb(0xff, 0x7b, 0x72));
+        if review > 0 {
+            pill(ui, &format!("Need review {review}"), Color32::from_rgb(0x3a, 0x2a, 0x10), Color32::from_rgb(0xf5, 0xd0, 0x76));
+        }
+        if !sorter.unmatched.is_empty() {
+            pill(ui, &format!("Unmatched {}", sorter.unmatched.len()), Color32::from_rgb(0x4a, 0x1b, 0x18), Color32::from_rgb(0xff, 0x7b, 0x72));
+        }
     });
     ui.add_space(4.0);
     ui.label(
@@ -432,23 +453,20 @@ fn sorter_tab(app: &mut EffectcraftApp, ui: &mut egui::Ui, alerts: &[PanelAlert]
 }
 
 fn paint_sorter_table(app: &mut EffectcraftApp, ui: &mut egui::Ui, alerts: &[PanelAlert], sorter: &effectcraft_screens::SorterResult) {
-    let avail = ui.available_width().max(360.0);
+    let avail = ui.available_width().max(280.0);
     let w_no = 28.0;
-    let w_entry = 168.0;
-    let w_covers = 96.0;
-    let w_pasted = (avail - w_no - w_entry - w_covers - 16.0).max(80.0);
-    let header = |ui: &mut egui::Ui, w: f32, t: &str| {
-        ui.allocate_ui_with_layout(Vec2::new(w, 18.0), Layout::left_to_right(Align::Center), |ui| {
-            ui.label(RichText::new(t).small().strong().color(MUTED));
+    let w_entry = 132.0;
+    let w_covers = 88.0;
+    let w_pasted = (avail - w_no - w_entry - w_covers).max(64.0);
+    let xs = [0.0, w_no, w_no + w_entry, w_no + w_entry + w_pasted];
+    let ws = [w_no, w_entry, w_pasted, w_covers];
+    let (hdr, _) = ui.allocate_exact_size(Vec2::new(avail, 18.0), Sense::hover());
+    for (i, title) in ["No.", "Entry · size", "Pasted screens", "Covers"].iter().enumerate() {
+        table_cell(ui, hdr, xs[i], ws[i], Layout::left_to_right(Align::Center), |ui| {
+            ui.label(RichText::new(*title).small().strong().color(MUTED));
         });
-    };
-    ui.horizontal(|ui| {
-        header(ui, w_no, "No.");
-        header(ui, w_entry, "Entry · size");
-        header(ui, w_pasted, "Pasted screens");
-        header(ui, w_covers, "Covers");
-    });
-    ui.add(egui::Separator::default().spacing(4.0));
+    }
+    ui.add(egui::Separator::default().spacing(2.0));
     let diff = app.session.state.screen.diff.clone();
     let sel_id = egui::Id::new("screenSuite.sorter.sel");
     let mut selected = ui.memory(|m| m.data.get_temp::<usize>(sel_id)).unwrap_or(0);
@@ -465,32 +483,45 @@ fn paint_sorter_table(app: &mut EffectcraftApp, ui: &mut egui::Ui, alerts: &[Pan
         if resp.clicked() {
             selected = vis_i;
         }
-        let hover = resp.hovered();
         let fill = if let Some(a) = alert {
             fill_for(a.level)
         } else if selected == vis_i {
             ROW_SEL
-        } else if hover {
+        } else if resp.hovered() {
             ROW_HOVER
         } else {
             Color32::TRANSPARENT
         };
         ui.painter().rect_filled(rect, 4.0, fill);
-        let mut row_ui = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(Vec2::new(4.0, 2.0))).layout(Layout::left_to_right(Align::Center)));
-        row_ui.allocate_ui_with_layout(Vec2::new(w_no, row_h - 4.0), Layout::left_to_right(Align::Center), |ui| {
-            ui.label(RichText::new(format!("{vis_i}")).color(MUTED));
+        table_cell(ui, rect, xs[0], ws[0], Layout::left_to_right(Align::Center), |ui| {
+            ui.label(RichText::new(format!("{vis_i}")).small().color(MUTED));
         });
-        row_ui.allocate_ui_with_layout(Vec2::new(w_entry, row_h - 4.0), Layout::top_down(Align::Min), |ui| {
-            ui.label(RichText::new(&row.use_name).strong().color(if added { Color32::from_rgb(0x5f, 0xd5, 0x85) } else { Color32::from_gray(230) }));
-            ui.label(RichText::new(row_size_text(row)).small().color(MUTED));
+        table_cell(ui, rect, xs[1], ws[1], Layout::top_down(Align::Min), |ui| {
+            ui.add(
+                egui::Label::new(RichText::new(&row.use_name).strong().color(if added {
+                    Color32::from_rgb(0x5f, 0xd5, 0x85)
+                } else {
+                    Color32::from_gray(230)
+                }))
+                .truncate()
+                .selectable(false),
+            );
+            ui.add(egui::Label::new(RichText::new(row_size_text(row)).small().color(MUTED)).truncate().selectable(false));
         });
-        row_ui.allocate_ui_with_layout(Vec2::new(w_pasted, row_h - 4.0), Layout::top_down(Align::Min), |ui| {
-            ui.label(RichText::new(row.covers.join(" · ")).small().color(Color32::from_gray(200)));
+        table_cell(ui, rect, xs[2], ws[2], Layout::top_down(Align::Min), |ui| {
+            let extra = row.covers.len().saturating_sub(1);
+            let shown = if extra == 0 {
+                row.covers.first().cloned().unwrap_or_default()
+            } else {
+                format!("{} +{extra} more", row.covers.first().cloned().unwrap_or_default())
+            };
+            let tip = row.covers.join("\n");
+            ui.add(egui::Label::new(RichText::new(shown).small().color(Color32::from_gray(200))).truncate().selectable(false)).on_hover_text(&tip);
             if !row.library_hint.is_empty() {
-                ui.label(RichText::new(&row.library_hint).small().color(MUTED));
+                ui.add(egui::Label::new(RichText::new(&row.library_hint).small().color(MUTED)).truncate().selectable(false));
             }
         });
-        row_ui.allocate_ui_with_layout(Vec2::new(w_covers, row_h - 4.0), Layout::left_to_right(Align::Center), |ui| {
+        table_cell(ui, rect, xs[3], ws[3], Layout::left_to_right(Align::Center), |ui| {
             let label = if row.covers_label.is_empty() { effectcraft_screens::screens_pill(row.count) } else { row.covers_label.clone() };
             pill(ui, &label, Color32::from_rgb(0x16, 0x30, 0x4f), Color32::from_rgb(0x9c, 0xc4, 0xf5));
             if added {
