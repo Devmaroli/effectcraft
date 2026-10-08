@@ -210,15 +210,16 @@ fn layer_cache_is_keyed_by_colour_settings() {
     };
     let a = frame(&p);
     assert!((a - 77.0 / 255.0).abs() < 1e-7);
-    assert_eq!(cache.stats().entries, 1);
+    // Static 2D layers cache the processed buffer *and* a composited plate.
+    assert_eq!(cache.stats().entries, 2);
     p.settings.bit_depth = BitDepth::Bpc32;
     let b = frame(&p);
     assert!((b - 0.3).abs() < 1e-7, "stale 8 bpc pixels: {b}");
     p.settings.working_space = Some(ColorSpace::Srgb);
     p.settings.linearize = true;
     let _ = frame(&p);
-    assert_eq!(cache.stats().entries, 3, "each setting renders its own entry");
-    // Back to 8 bpc reuses the first entry.
+    assert_eq!(cache.stats().entries, 6, "each setting renders its own layer and plate");
+    // Back to 8 bpc reuses the first plate (and skips the per-layer lookup).
     p.settings.bit_depth = BitDepth::Bpc8;
     p.settings.working_space = None;
     p.settings.linearize = false;
