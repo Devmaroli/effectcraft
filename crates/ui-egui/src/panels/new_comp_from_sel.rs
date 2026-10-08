@@ -189,7 +189,7 @@ pub fn show(app: &mut EffectcraftApp, ctx: &egui::Context, t: &Tokens) {
     let mut close = false;
     let mut create = false;
     let create_n = app.dialog_state.ncs.will_create(&app.session);
-    super::dialogs::modal(ctx, "New Comp From Selection", vec2(560.0, 640.0), t, |ui| {
+    super::dialogs::modal(ctx, "New Comp From Selection", vec2(620.0, 700.0), t, |ui| {
         let d = &mut app.dialog_state.ncs;
         mode_cards(ui, d, t, &mut app.auto);
         ui.add_space(10.0);
@@ -206,7 +206,7 @@ pub fn show(app: &mut EffectcraftApp, ctx: &egui::Context, t: &Tokens) {
             ui.label(egui::RichText::new(hint).color(t.text_dim).size(11.5));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let create_lbl = if d.single || create_n <= 1 { "Create Comp".into() } else { format!("Create {create_n} Comps") };
-                let btn = egui::Button::new(egui::RichText::new(create_lbl).color(Color32::WHITE)).fill(SELECT_BLUE);
+                let btn = egui::Button::new(egui::RichText::new(create_lbl).color(Color32::WHITE)).fill(SELECT_BLUE).min_size(vec2(128.0, 28.0));
                 let r = ui.add(btn);
                 app.auto.add("dialog.ncs.ok", r.rect, "Create");
                 if r.clicked() {
@@ -244,7 +244,7 @@ fn mode_cards(ui: &mut egui::Ui, d: &mut NewCompFromSelDraft, t: &Tokens, auto: 
             (true, "Single composition", "All items in one comp, stacked or one after another (with overlap)."),
             (false, "Multiple compositions", "One comp per item, each at its own size and length."),
         ] {
-            let (rect, resp) = ui.allocate_exact_size(vec2(w, 72.0), Sense::click());
+            let (rect, resp) = ui.allocate_exact_size(vec2(w, 88.0), Sense::click());
             let on = d.single == single;
             let p = ui.painter();
             p.rect_filled(rect, 6.0, if on { Color32::from_rgb(0x1a, 0x24, 0x48) } else { t.field_bg });

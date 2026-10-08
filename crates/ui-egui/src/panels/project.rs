@@ -734,8 +734,8 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         x = badge.max.x + 8.0;
     }
     // List / grid toggle, then a thumbnail size slider in grid view.
-    let list_r = Rect::from_min_size(pos2(foot.max.x - 78.0, foot.min.y + 3.0), vec2(22.0, 22.0));
-    let grid_r = Rect::from_min_size(pos2(foot.max.x - 54.0, foot.min.y + 3.0), vec2(22.0, 22.0));
+    let list_r = Rect::from_min_size(pos2(foot.max.x - 82.0, foot.min.y + 3.0), vec2(22.0, 22.0));
+    let grid_r = Rect::from_min_size(pos2(foot.max.x - 56.0, foot.min.y + 3.0), vec2(22.0, 22.0));
     if widgets::icon_button(ui, list_r, Icon::ListRows, app.ui.project_view == ProjectView::List, &t, egui::Id::new("pview-list")).clicked() {
         app.ui.project_view = ProjectView::List;
     }
