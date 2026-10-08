@@ -21,7 +21,8 @@ use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 
 use effectcraft_effects::Buf;
-use effectcraft_project::{FootageKind, ItemKind, Layer, LayerSource, Node, PropGroup};
+use effectcraft_project::render_queue::ProxyUse;
+use effectcraft_project::{FootageKind, ItemKind, Layer, LayerSource, Node, PropGroup, Quality};
 
 use crate::eval::EvalCtx;
 
@@ -500,7 +501,20 @@ fn group_animated(g: &PropGroup) -> bool {
 
 /// Content key for a cached composite of consecutive static layers (a "plate"): canvas size,
 /// each layer's processed pixels, its transform into the comp, blend mode and opacity.
-pub fn plate_key(ctx: &EvalCtx, layers: &[&Layer], scale: f64, width: u32, height: u32, draft: bool) -> Option<u64> {
+///
+/// `proxy` and `inherited` must be part of the key: the same stills composite differently
+/// under Proxy Use (Use None vs Current Settings) and when a parent precomp's Draft/Best
+/// switch is inherited (Switches Affect Nested Comps).
+pub fn plate_key(
+    ctx: &EvalCtx,
+    layers: &[&Layer],
+    scale: f64,
+    width: u32,
+    height: u32,
+    draft: bool,
+    proxy: ProxyUse,
+    inherited: Option<(Quality, bool)>,
+) -> Option<u64> {
     if layers.is_empty() {
         return None;
     }
@@ -509,6 +523,8 @@ pub fn plate_key(ctx: &EvalCtx, layers: &[&Layer], scale: f64, width: u32, heigh
     height.hash(&mut h);
     scale.to_bits().hash(&mut h);
     draft.hash(&mut h);
+    proxy.hash(&mut h);
+    inherited.hash(&mut h);
     crate::color::Pipe::of(&ctx.project.settings).key().hash(&mut h);
     for layer in layers {
         match &layer.source {

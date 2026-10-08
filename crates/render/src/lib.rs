@@ -889,6 +889,10 @@ impl<'a> Renderer<'a> {
         !layer.is_3d() && !layer.switches.adjustment && self.collapsed(ctx, layer).is_none() && self.quality(layer) != Quality::Wireframe
     }
 
+    fn plate_key(&self, ctx: &EvalCtx<'a>, layers: &[&'a Layer], canvas: &Image) -> Option<u64> {
+        cache::plate_key(ctx, layers, self.opts.scale, canvas.width, canvas.height, self.opts.draft, self.opts.proxy, self.inherited)
+    }
+
     /// Draw a run of independent 2D layers: reuse a cached static plate when the bottom of the
     /// stack does not change from frame to frame, bake the rest in parallel, then blend in order.
     fn draw_2d_run(&self, ctx: &EvalCtx<'a>, layers: &[&'a Layer], canvas: &mut Image, mut blank: bool) {
@@ -902,7 +906,7 @@ impl<'a> Renderer<'a> {
                 prefix += 1;
             }
             if prefix > 0
-                && let Some(key) = cache::plate_key(ctx, &layers[..prefix], self.opts.scale, canvas.width, canvas.height, self.opts.draft)
+                && let Some(key) = self.plate_key(ctx, &layers[..prefix], canvas)
                 && let Some(plate) = cache.get(key)
                 && plate.img.width == canvas.width
                 && plate.img.height == canvas.height
@@ -917,7 +921,7 @@ impl<'a> Renderer<'a> {
                     self.pipe.quantize_region(canvas, changed);
                     blank = false;
                 }
-                if let Some(key) = cache::plate_key(ctx, &layers[..prefix], self.opts.scale, canvas.width, canvas.height, self.opts.draft) {
+                if let Some(key) = self.plate_key(ctx, &layers[..prefix], canvas) {
                     cache.insert(key, Arc::new(Buf { img: canvas.clone(), offset: [0.0; 2], scale: self.opts.scale }));
                 }
                 start = prefix;
