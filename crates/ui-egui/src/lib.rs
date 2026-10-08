@@ -88,6 +88,8 @@ pub enum Dialog {
     UnsavedChanges,
     /// Delete Project items that compositions use? (`panels::delete_items`).
     DeleteItems,
+    /// Project panel ▸ New Comp From Selection.
+    NewCompFromSelection,
 }
 
 /// Host hooks provided by the native app (file pickers etc.).

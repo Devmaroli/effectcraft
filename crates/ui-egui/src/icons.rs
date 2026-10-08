@@ -91,6 +91,8 @@ pub enum Icon {
     Snapshot,
     ShowSnapshot,
     Grid,
+    /// Project panel list view: three stacked rows.
+    ListRows,
     MaskVis,
     Checker,
     Region,
@@ -532,6 +534,11 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
             pen.line(&[(10.0, 2.0), (10.0, 14.0)]);
             pen.line(&[(2.0, 6.0), (14.0, 6.0)]);
             pen.line(&[(2.0, 10.0), (14.0, 10.0)]);
+        }
+        ListRows => {
+            pen.rect(2.0, 3.0, 14.0, 5.5);
+            pen.rect(2.0, 7.25, 14.0, 9.75);
+            pen.rect(2.0, 11.5, 14.0, 14.0);
         }
         MaskVis => {
             pen.rect(2.0, 2.0, 14.0, 14.0);

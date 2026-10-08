@@ -150,6 +150,20 @@ fn import_solid(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"item": id.0}))
 }
 
+fn is_audio_only(it: &effectcraft_project::Item) -> bool {
+    match &it.kind {
+        ItemKind::Footage(f) => f.kind == FootageKind::Audio || (f.has_audio && !f.has_video),
+        _ => false,
+    }
+}
+
+fn file_stem(name: &str) -> String {
+    match name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() && ext.chars().all(|c| c.is_ascii_alphanumeric()) && ext.len() <= 5 => stem.to_string(),
+        _ => name.to_string(),
+    }
+}
+
 /// File ▸ New Comp from Selection. Each selected item becomes a composition of its size, pixel
 /// aspect, frame rate and duration holding it as a layer; with `single`, one composition holds
 /// them all (first selected on top), with the settings of item `dimensionsFrom` (an index into
@@ -157,15 +171,22 @@ fn import_solid(s: &mut Session, p: &Value) -> Result<Value> {
 /// after another (Sequence Layers: `overlap`, `overlapDuration` seconds, `transition`).
 /// `duration`: seconds for stills (default: Settings ▸ Import ▸ Still Footage when it is a
 /// duration, else 10 s).
-/// `addToRenderQueue` queues the new compositions. One undo step.
+/// `sizeMode`: `each` (default when not single: every comp matches its item), `same` (all comps
+/// use `dimensionsFrom`), `custom` (`width`/`height`). `frameRate` sets a shared rate;
+/// `keepVideoRate` (off unless set) keeps each video's own rate. `folder` / `newFolder` place
+/// the comps; `open` (default true) opens them. Folders in the selection are skipped. In
+/// Multiple, audio does not get its own comp; in Single it joins as a layer. Selected comps
+/// nest. `addToRenderQueue` queues the new compositions. One undo step.
 fn new_comp_from_selection(s: &mut Session, p: &Value) -> Result<Value> {
-    let items: Vec<ItemId> = s.state.project_selection.iter().copied().filter(|i| s.project.item(*i).is_some_and(|x| !x.is_folder())).collect();
+    let picked: Vec<ItemId> = s.state.project_selection.iter().copied().filter(|i| s.project.item(*i).is_some_and(|x| !x.is_folder())).collect();
+    let single = b_p(p, "single").unwrap_or(false) && picked.len() > 1;
+    let items: Vec<ItemId> = picked.iter().copied().filter(|i| single || s.project.item(*i).is_none_or(|x| !is_audio_only(x))).collect();
     if items.is_empty() {
         return Err(bad("file.newCompFromSelection", "select footage in the Project panel"));
     }
-    let single = b_p(p, "single").unwrap_or(false) && items.len() > 1;
+    let size_mode = str_p(p, "sizeMode").unwrap_or(if single { "from" } else { "each" });
     let from = p.get("dimensionsFrom").and_then(Value::as_u64).unwrap_or(0) as usize;
-    if single && from >= items.len() {
+    if (single || size_mode == "same") && from >= items.len() {
         return Err(bad("file.newCompFromSelection", format!("`dimensionsFrom` must be below {}", items.len())));
     }
     let still = f_p(p, "duration")
@@ -181,15 +202,38 @@ fn new_comp_from_selection(s: &mut Session, p: &Value) -> Result<Value> {
         })
     });
     let queue = b_p(p, "addToRenderQueue").unwrap_or(false);
+    let open = b_p(p, "open").unwrap_or(true);
+    let keep_video = b_p(p, "keepVideoRate").unwrap_or(false);
+    let dialog_rate = f_p(p, "frameRate").filter(|r| r.is_finite() && *r > 0.0).map(FrameRate::from_f64);
+    let custom = match (p.get("width").and_then(Value::as_u64), p.get("height").and_then(Value::as_u64)) {
+        (Some(w), Some(h)) if w > 0 && h > 0 => Some((w as u32, h as u32)),
+        _ => None,
+    };
+    let given_name = str_p(p, "name").map(str::to_string);
     let proj = s.project.clone();
     let duration = |i: ItemId| proj.item(i).and_then(|it| it.duration()).filter(|d| *d > Tick::ZERO).unwrap_or(Tick::from_seconds_f64(still));
     let groups: Vec<Vec<ItemId>> = if single { vec![items.clone()] } else { items.iter().map(|i| vec![*i]).collect() };
     super::app_more::grouped(s, "New Comp from Selection", |s| {
+        let mut parent = p.get("folder").and_then(Value::as_u64).map(ItemId).filter(|i| s.project.item(*i).is_some_and(|x| x.is_folder()));
+        if let Some(nf) = str_p(p, "newFolder").map(str::trim).filter(|n| !n.is_empty()) {
+            let r = s.execute("project.newFolder", json!({"name": nf, "parent": parent.map(|i| i.0)}))?;
+            parent = r.get("item").and_then(Value::as_u64).map(ItemId);
+        }
         let mut made = vec![];
-        for g in groups {
-            let lead = g.get(if single { from } else { 0 }).and_then(|i| proj.item(*i)).ok_or(EngineError::NoComp)?;
-            let (w, h) = lead.dimensions().unwrap_or((1920, 1080));
-            let rate = lead.frame_rate().unwrap_or(FrameRate::FPS_29_97);
+        for g in &groups {
+            let lead_idx = if single { from.min(g.len().saturating_sub(1)) } else { 0 };
+            let lead = g.get(lead_idx).and_then(|i| proj.item(*i)).ok_or(EngineError::NoComp)?;
+            let from_item = items.get(from).and_then(|i| proj.item(*i)).unwrap_or(lead);
+            let (w, h) = match size_mode {
+                "custom" => custom.or_else(|| lead.dimensions()).unwrap_or((1920, 1080)),
+                "same" => from_item.dimensions().or_else(|| lead.dimensions()).unwrap_or((1920, 1080)),
+                _ => lead.dimensions().unwrap_or((1920, 1080)),
+            };
+            let rate = if keep_video {
+                lead.frame_rate().or(dialog_rate).unwrap_or(FrameRate::FPS_29_97)
+            } else {
+                dialog_rate.or_else(|| lead.frame_rate()).unwrap_or(FrameRate::FPS_29_97)
+            };
             let pixel_aspect = match &lead.kind {
                 ItemKind::Footage(f) => f.pixel_aspect,
                 ItemKind::Solid(so) => so.pixel_aspect,
@@ -203,14 +247,16 @@ fn new_comp_from_selection(s: &mut Session, p: &Value) -> Result<Value> {
                 _ => g.iter().map(|i| duration(*i)).max().unwrap_or(Tick::from_seconds_f64(still)),
             }
             .max(rate.frame_duration());
-            let name = lead.name.rsplit_once('.').map(|(a, _)| a.to_string()).unwrap_or(lead.name.clone());
+            let name = if single { given_name.clone().unwrap_or_else(|| file_stem(&lead.name)) } else { file_stem(&lead.name) };
             let c = Comp { pixel_aspect, ..Comp::new(w.max(1), h.max(1), rate, dur) };
             let cid = s.edit("New Comp from Selection", None, |proj, st| {
-                let cid = proj.add_item(&name, Label::Sandstone, None, ItemKind::Comp(c.into()));
+                let cid = proj.add_item(&name, Label::Sandstone, parent, ItemKind::Comp(c.into()));
                 st.project_selection = vec![cid];
                 Ok(cid)
             })?;
-            s.open_comp(cid);
+            if open {
+                s.open_comp(cid);
+            }
             // Added bottom first, so the first selected ends up on top.
             let mut layers = vec![];
             for item in g.iter().rev() {
@@ -230,7 +276,7 @@ fn new_comp_from_selection(s: &mut Session, p: &Value) -> Result<Value> {
             }
             made.push(cid.0);
         }
-        Ok(json!({"comps": made}))
+        Ok(json!({"comps": made, "folder": parent.map(|i| i.0)}))
     })
 }
 
@@ -905,7 +951,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "New Comp from Selection...",
             ["File"],
             Some("Cmd+Alt+\\"),
-            "{duration? (s, for stills), single?: bool (one comp for all), dimensionsFrom?: index, sequence?: bool, overlap?: bool, overlapDuration? (s), transition?: off|dissolveFront|crossDissolve, addToRenderQueue?: bool} → {comps}",
+            "{duration? (s, for stills), single?: bool (one comp for all), dimensionsFrom?: index, sizeMode?: each|same|custom, width?, height?, frameRate?, keepVideoRate?: bool, name?, folder?, newFolder?, open?: bool, sequence?: bool, overlap?: bool, overlapDuration? (s), transition?: off|dissolveFront|crossDissolve, addToRenderQueue?: bool} → {comps, folder?}",
             has_project_selection,
             new_comp_from_selection
         ),

@@ -209,11 +209,9 @@ pub fn invoke(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str, params: V
         match id {
             "edit.duplicate" => return run_engine(app, ctx, "project.duplicate", json!({})),
             "edit.selectAll" => {
-                let items: Vec<u64> = crate::panels::project::visible_rows(app)
-                    .into_iter()
-                    .filter(|(id, _)| app.ui.project_search.is_empty() || app.session.project.item(*id).is_some_and(|it| !it.is_folder()))
-                    .map(|(id, _)| id.0)
-                    .collect();
+                let ids = crate::panels::project::selectable_ids(app);
+                let names: Vec<String> = ids.iter().filter_map(|id| app.session.project.item(*id).map(|it| it.name.clone())).collect();
+                let items: Vec<u64> = crate::panels::project_select::select_all_visible(&ids, &names, &app.ui.project_search).iter().map(|i| i.0).collect();
                 return run_engine(app, ctx, "project.select", json!({"items":items}));
             }
             "edit.deselectAll" => return run_engine(app, ctx, "project.select", json!({"items":[]})),
@@ -521,6 +519,10 @@ pub fn invoke(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str, params: V
             }
             if let Some(r) = file_dialog(app, id, &params) {
                 return r;
+            }
+            if id == "file.newCompFromSelection" && no_params(&params) {
+                crate::panels::new_comp_from_sel::open(app)?;
+                return Ok(json!({"dialog": id}));
             }
             if id == "layer.precompose" && params.get("name").is_none() {
                 crate::panels::precomp::open(app, &params)?;

@@ -59,6 +59,8 @@ pub struct DialogState {
     pub unsaved: super::unsaved::Pending,
     /// Deleting Project items in use: the deletion waiting on the prompt.
     pub delete_items: super::delete_items::Pending,
+    /// Project panel ▸ New Comp From Selection.
+    pub ncs: super::new_comp_from_sel::NewCompFromSelDraft,
 }
 
 pub fn open_new_comp(app: &mut EffectcraftApp) {
@@ -191,6 +193,7 @@ pub fn show(app: &mut EffectcraftApp, ctx: &egui::Context) {
         Dialog::RenderTemplates => super::rq_templates::show(app, ctx, &t),
         Dialog::UnsavedChanges => super::unsaved::show(app, ctx, &t),
         Dialog::DeleteItems => super::delete_items::show(app, ctx, &t),
+        Dialog::NewCompFromSelection => super::new_comp_from_sel::show(app, ctx, &t),
     }
 }
 
@@ -572,20 +575,20 @@ mod tests {
         let b = app.session.execute("file.importSolid", json!({"name": "B", "width": 300, "height": 50})).unwrap();
         let ids: Vec<ItemId> = [a, b].iter().map(|r| ItemId(r["item"].as_u64().unwrap())).collect();
         app.session.state.project_selection = vec![ids[0]];
-        // One item: made at once.
         crate::menus::invoke(&mut app, &ctx, "file.newCompFromSelection", json!({})).unwrap();
-        assert!(app.dialog.is_none());
+        assert_eq!(app.dialog, Some(Dialog::NewCompFromSelection));
+        app.dialog = None;
         app.session.state.project_selection = ids.clone();
         crate::menus::invoke(&mut app, &ctx, "file.newCompFromSelection", json!({})).unwrap();
-        assert_eq!((app.dialog, app.dialog_state.form.command.as_str()), (Some(Dialog::Form), "file.newCompFromSelection"));
+        assert_eq!(app.dialog, Some(Dialog::NewCompFromSelection));
+        assert!(!app.dialog_state.ncs.single, "different sizes default to Multiple");
         frame(&mut app, &ctx);
-        for k in ["single", "dimensionsFrom", "duration", "addToRenderQueue", "sequence", "overlap", "overlapDuration", "transition"] {
-            assert!(app.auto.find(&format!("form.field.{k}")).is_some(), "{k}");
+        for k in ["single", "multiple", "ok", "cancel", "folder", "open"] {
+            assert!(app.auto.find(&format!("dialog.ncs.{k}")).is_some(), "{k}");
         }
-        // Its parameters are ones the command accepts (checked as agents' calls are).
         let comps = app.session.project.comps().count();
-        app.session.execute_checked("file.newCompFromSelection", app.dialog_state.form.params()).unwrap();
-        assert_eq!(app.session.project.comps().count(), comps + 1, "Single Composition is the default");
+        app.session.execute_checked("file.newCompFromSelection", app.dialog_state.ncs.params(&app.session)).unwrap();
+        assert_eq!(app.session.project.comps().count(), comps + 2, "Multiple is the default when sizes differ");
     }
 
     #[test]
