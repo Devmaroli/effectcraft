@@ -15,6 +15,17 @@ for example:
 
   C:\Users\YourName\Apps\EffectCraft\
 
+This copy is portable: portable.txt next to effectcraft.exe tells EffectCraft
+to keep settings, shortcut presets and downloaded models in this folder
+instead of %APPDATA%\EffectCraft. Leave that file here. If you delete it,
+the next launch uses the usual per-user settings folder.
+
+A per-user installer (effectcraft-Setup-x64.exe) is also available. It
+installs to %LOCALAPPDATA%\Programs\Craft\effectcraft, does not need
+administrator rights, and adds Start menu and desktop shortcuts. That
+installed copy does not include portable.txt, so its settings stay in
+AppData. You can optionally put effectcraft-cli on your user PATH.
+
 How to open EffectCraft
 -----------------------
 1. Open the folder in File Explorer.

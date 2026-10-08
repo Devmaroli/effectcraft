@@ -51,6 +51,7 @@ the dialog.
 |---|---|---|
 | macOS 11+ (universal: Apple silicon and Intel) | `effectcraft-<v>-macos-universal.dmg`, `effectcraft-cli-<v>-macos-universal.zip` | `macos-15` |
 | Windows 10+ x64 | `effectcraft-<v>-windows-x64.msi`, `effectcraft-<v>-windows-x64-portable.zip` | `windows-latest` |
+| Windows 10+ x64 (office) | `effectcraft-Setup-x64.exe`, `effectcraft-Portable-x64.zip` | tag `v*` (see below) |
 | Windows 10+ x86 (32-bit) | `effectcraft-<v>-windows-x86.msi`, `effectcraft-<v>-windows-x86-portable.zip` | `windows-latest` |
 | Windows 11 ARM64 | `effectcraft-<v>-windows-arm64.msi`, `effectcraft-<v>-windows-arm64-portable.zip` | cross-compiled on `windows-latest` |
 | Linux x86_64 | `effectcraft-<v>-linux-x86_64.{AppImage,deb,rpm,tar.gz}` | `ubuntu-22.04` |
@@ -59,6 +60,31 @@ the dialog.
 
 The ARM64 MSI is installed and run on ARM64 hardware by
 [`windows-arm64.yml`](../.github/workflows/windows-arm64.yml).
+
+### Windows office install (per-user Setup.exe + portable zip)
+
+Pushing a version tag (`v0.5.0`, `v0.5.0-rc.1`) runs
+[`.github/workflows/windows-office-install.yml`](../.github/workflows/windows-office-install.yml)
+on `windows-latest`. It builds the MSVC binaries, compiles an Inno Setup installer, zips a
+portable copy, writes `SHA256SUMS.txt`, and attaches all three to the GitHub Release for that tag.
+
+| File | What it is |
+|---|---|
+| `effectcraft-Setup-x64.exe` | Per-user installer. No administrator rights. Destination `%LOCALAPPDATA%\Programs\Craft\effectcraft`. Start menu + desktop shortcuts, the pink unicorn icon, an uninstaller. Optional task adds `effectcraft-cli` to the current user's PATH. |
+| `effectcraft-Portable-x64.zip` | Extract anywhere and double-click `effectcraft.exe`. `portable.txt` next to the exe keeps settings in that folder instead of `%APPDATA%\EffectCraft`. |
+| `SHA256SUMS.txt` | SHA-256 of the two files. |
+
+The installer does **not** include `portable.txt`, so an installed copy uses AppData. The WiX MSI
+on the `release` branch is still the per-machine Program Files package.
+
+Build them locally on Windows with Inno Setup 6 installed:
+
+```powershell
+pwsh packaging/windows/package-office.ps1
+```
+
+On Linux, `packaging/windows/cross-gnu.sh` produces the portable zip (mingw); compile the
+Setup.exe with Inno Setup under Wine or on a Windows machine (`packaging/windows/package-office.sh`).
 
 Every binary reports its version: `effectcraft --version`, `effectcraft-cli --version` and
 *Help › About EffectCraft*.

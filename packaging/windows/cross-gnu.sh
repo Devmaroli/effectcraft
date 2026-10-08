@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Cross-compile EffectCraft's GUI app and CLI for 64-bit Windows from Linux
-# (mingw-w64 / x86_64-pc-windows-gnu). Used to produce a portable zip for users
-# who do not have a Rust toolchain.
+# (mingw-w64 / x86_64-pc-windows-gnu). Used to produce a portable zip
+# (effectcraft-<version>-windows-x64.zip and effectcraft-Portable-x64.zip,
+# with portable.txt so settings live next to the exe) for users who do not
+# have a Rust toolchain. Setup.exe is compiled separately (package-office).
 #
 #   ./packaging/windows/cross-gnu.sh
 #   DIST=/tmp/out ./packaging/windows/cross-gnu.sh
@@ -76,6 +78,7 @@ if command -v x86_64-w64-mingw32-objdump >/dev/null; then
 fi
 
 cp "$Root/packaging/windows/README-Windows.txt" "$Stage/"
+cp "$Root/packaging/windows/portable.txt" "$Stage/"
 for f in LICENSE-MIT LICENSE-APACHE NOTICE; do
   [[ -f "$Root/$f" ]] && cp "$Root/$f" "$Stage/"
 done
@@ -104,6 +107,11 @@ rm -f "$Zip"
 ( cd "$Dist" && zip -r -9 "$(basename "$Zip")" "$(basename "$Stage")" )
 ls -lh "$Zip"
 echo "ZIP=$Zip"
+
+# Office name: same contents, stable filename for tags and GitHub Releases.
+OfficeZip="$Dist/effectcraft-Portable-x64.zip"
+cp -f "$Zip" "$OfficeZip"
+echo "OFFICE_ZIP=$OfficeZip"
 
 if command -v wine >/dev/null; then
   echo "==> wine smoke-test (CLI)"

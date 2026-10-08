@@ -55,3 +55,4 @@ jobs:
           sed -e 's/@VERSION@/0.0.0/' -e 's/@DATE@/2026-01-01/' packaging/linux/ai.storyteller.effectcraft.metainfo.xml.in >"$RUNNER_TEMP/ai.storyteller.effectcraft.metainfo.xml"
           appstreamcli validate --no-net --explain "$RUNNER_TEMP/ai.storyteller.effectcraft.metainfo.xml"
           python3 -c "import yaml; m = yaml.safe_load(open('packaging/linux/flatpak/ai.storyteller.effectcraft.yml')); assert m['id'] == 'ai.storyteller.effectcraft' and m['command'] == 'effectcraft'"
+          python3 packaging/windows/check-iss.py

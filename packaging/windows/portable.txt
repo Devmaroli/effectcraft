@@ -1,0 +1,12 @@
+EffectCraft portable mode
+
+This file tells EffectCraft to keep settings, shortcut presets, crash-recovery
+files and downloaded models in this folder (next to effectcraft.exe) instead of
+%APPDATA%\EffectCraft.
+
+Leave this file here. If you delete it, the next launch uses the usual per-user
+settings folder.
+
+Do not add this file to an installed copy under
+%LOCALAPPDATA%\Programs\Craft\effectcraft unless you want that install to stop
+using AppData.
