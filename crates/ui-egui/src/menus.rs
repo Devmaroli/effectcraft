@@ -1495,11 +1495,21 @@ pub fn menu_bar(app: &mut EffectcraftApp, ui: &mut egui::Ui) {
                 if let MenuNode::Submenu { label, children } = node {
                     let r = ui.menu_button(crate::i18n::label(app, "", label), |ui| {
                         ui.set_min_width(if label == "Effect" { 200.0 } else { 280.0 });
-                        // Top-level menus (Window especially) must fit a 1080p screen.
+                        // Long menus (Window, Effect) must use the screen height rather than
+                        // egui's ~400pt popup default, then scroll instead of clipping off a
+                        // 1080p display. Short menus still shrink to their content.
                         let max_h = (ui.ctx().content_rect().height() - 48.0).max(120.0);
-                        egui::ScrollArea::vertical().max_height(max_h).auto_shrink([false, true]).show(ui, |ui| {
-                            menu_nodes(app, ui, children, &mut clicked);
-                        });
+                        let long = children.len() > 16;
+                        let out = if long {
+                            egui::ScrollArea::vertical()
+                                .max_height(max_h)
+                                .min_scrolled_height(max_h)
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| menu_nodes(app, ui, children, &mut clicked))
+                        } else {
+                            egui::ScrollArea::vertical().max_height(max_h).auto_shrink([false, true]).show(ui, |ui| menu_nodes(app, ui, children, &mut clicked))
+                        };
+                        app.auto.add(&format!("menu.{label}.popup"), out.inner_rect, label);
                     });
                     app.auto.add(&format!("menu.{label}"), r.response.rect, label);
                 }
@@ -1552,7 +1562,7 @@ fn menu_nodes(app: &mut EffectcraftApp, ui: &mut egui::Ui, nodes: &[MenuNode], c
             MenuNode::Submenu { label, children } => {
                 let ws = app.ui.workspace.clone();
                 let shown = crate::i18n::submenu(app, label, effectcraft_engine::menus::submenu_label(&app.session, label, &dyn_ctx(&ws, &[])));
-                ui.menu_button((gutter(false), shown.as_str()), |ui| {
+                let inner = ui.menu_button((gutter(false), shown.as_str()), |ui| {
                     ui.set_min_width(if children.len() > 30 { 200.0 } else { 240.0 });
                     // Long submenus (Blending Mode, effect categories) scroll instead of running
                     // off the screen. Others show whole: egui sizes a new submenu from a default
@@ -1561,6 +1571,7 @@ fn menu_nodes(app: &mut EffectcraftApp, ui: &mut egui::Ui, nodes: &[MenuNode], c
                     let max_h = ui.ctx().content_rect().height() - 40.0;
                     egui::ScrollArea::vertical().max_height(max_h).min_scrolled_height(max_h).show(ui, |ui| menu_nodes(app, ui, children, clicked));
                 });
+                app.auto.add(&format!("menu.submenu.{label}"), inner.response.rect, &shown);
             }
             MenuNode::Item(e) => {
                 if menu_entry(app, ui, e) {

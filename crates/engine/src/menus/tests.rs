@@ -168,12 +168,39 @@ fn screen_suite_is_in_the_top_fifth_of_the_window_menu() {
             MenuNode::Separator => "---".into(),
         })
         .collect();
-    let n = rows.len().max(1);
-    let suite = rows.iter().position(|l| l == "Screen Suite").expect("Screen Suite");
-    let lib = rows.iter().position(|l| l == "Screen Library").expect("Screen Library");
-    assert!(suite * 5 < n, "Screen Suite at {suite} of {n}: {rows:?}");
-    assert!(lib * 5 < n, "Screen Library at {lib} of {n}: {rows:?}");
+    // First group after workspace/layout items, with a separator below.
+    let after_ws = rows.iter().position(|l| l == "Assign Shortcut to Workspace").expect("workspace shortcuts");
+    assert_eq!(
+        &rows[after_ws + 1..after_ws + 5],
+        ["---", "Screen Suite", "Screen Library", "---"],
+        "Screen Suite/Library must be the first group after Workspace: {rows:?}"
+    );
+    let items: Vec<&str> = window
+        .iter()
+        .filter_map(|n| match n {
+            MenuNode::Item(e) => Some(e.label.as_str()),
+            MenuNode::Submenu { label, .. } => Some(label.as_str()),
+            MenuNode::Dynamic { name } => Some(name.as_str()),
+            MenuNode::Separator => None,
+        })
+        .collect();
+    let n = items.len().max(1);
+    let suite = items.iter().position(|l| *l == "Screen Suite").expect("Screen Suite");
+    let lib = items.iter().position(|l| *l == "Screen Library").expect("Screen Library");
+    assert!(suite * 5 < n, "Screen Suite index {suite} of {n} is not < 20%: {items:?}");
+    assert!(lib * 5 < n, "Screen Library index {lib} of {n} is not < 20%: {items:?}");
     assert!(suite < lib);
+    let shortcut = |name: &str| {
+        window.iter().find_map(|n| match n {
+            MenuNode::Item(e) if e.label == name => Some(e.shortcut.clone()),
+            _ => None,
+        })
+    };
+    assert_eq!(shortcut("Screen Suite"), Some(None), "Screen Suite never had a Window-menu shortcut");
+    assert_eq!(shortcut("Screen Library"), Some(None), "Screen Library never had a Window-menu shortcut");
+    assert_eq!(shortcut("Audio"), Some(Some("Cmd+4".into())));
+    assert_eq!(shortcut("Render Queue"), Some(Some("Cmd+Alt+0".into())));
+    assert_eq!(shortcut("Tools"), Some(Some("Cmd+1".into())));
 }
 
 #[test]

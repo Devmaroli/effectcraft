@@ -345,14 +345,35 @@ fn window_menu_fits_1080p_and_screen_suite_is_near_the_top() {
     h.run_steps(4);
     click(&mut h, "menu.Window");
     h.run_steps(4);
-    let suite = h.state().auto.find("menu.window.screenSuite").expect("Screen Suite in the open Window menu");
-    let lib = h.state().auto.find("menu.window.screenLibrary").expect("Screen Library in the open Window menu");
+    let suite = h.state().auto.find("menu.window.screenSuite").expect("Screen Suite in the open Window menu").clone();
+    let lib = h.state().auto.find("menu.window.screenLibrary").expect("Screen Library in the open Window menu").clone();
+    let popup = h.state().auto.find("menu.Window.popup").expect("Window menu popup").clone();
+    let popup_bottom = popup.rect[1] + popup.rect[3];
+    assert!(popup_bottom <= 1080.0 + 1.0, "Window menu popup clipped at y={popup_bottom}");
+    assert!(popup.rect[3] > 500.0, "Window menu should use available 1080p height, got h={}", popup.rect[3]);
     let suite_bottom = suite.rect[1] + suite.rect[3];
     let lib_bottom = lib.rect[1] + lib.rect[3];
     assert!(suite_bottom <= 1080.0, "Screen Suite clipped at y={suite_bottom}");
     assert!(lib_bottom <= 1080.0, "Screen Library clipped at y={lib_bottom}");
     assert!(suite.rect[1] < 1080.0 * 0.20, "Screen Suite y={} is not in the top 20% of 1080p", suite.rect[1]);
     assert!(lib.rect[1] < 1080.0 * 0.20, "Screen Library y={} is not in the top 20% of 1080p", lib.rect[1]);
+    let mut rows: Vec<_> = h
+        .state()
+        .auto
+        .previous
+        .iter()
+        .chain(h.state().auto.elements.iter())
+        .filter(|e| e.id.starts_with("menu.window.") || e.id.starts_with("menu.submenu."))
+        .map(|e| (e.id.clone(), e.rect[1]))
+        .collect();
+    rows.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+    rows.dedup_by(|a, b| a.0 == b.0);
+    let n = rows.len().max(1);
+    let suite_i = rows.iter().position(|(id, _)| id == "menu.window.screenSuite").expect("Screen Suite in row list");
+    let lib_i = rows.iter().position(|(id, _)| id == "menu.window.screenLibrary").expect("Screen Library in row list");
+    assert!(suite_i * 5 < n, "Screen Suite index {suite_i} of {n} is not < 20%: {rows:?}");
+    assert!(lib_i * 5 < n, "Screen Library index {lib_i} of {n} is not < 20%: {rows:?}");
+    assert!(h.state().auto.find("menu.window.renderQueue").is_some(), "Render Queue must still be in the Window menu");
     let dir = std::env::var("WINDOW_MENU_SNAP").unwrap_or_else(|_| "/opt/cursor/artifacts/screenshots".into());
     std::fs::create_dir_all(&dir).unwrap();
     h.render().expect("render").save(format!("{dir}/window-menu-1080p.png")).unwrap();
