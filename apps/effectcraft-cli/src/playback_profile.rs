@@ -102,7 +102,7 @@ fn simd_level() -> Vec<&'static str> {
     }
 }
 
-fn host_json(gpu_name: Option<&str>, gpu_requested: bool, caps: &PlaybackCaps) -> Json {
+fn host_json(gpu_name: Option<&str>, gpu_requested: bool, gpu_init_ms: f64, eager_pipelines: Option<usize>, caps: &PlaybackCaps) -> Json {
     let mem = sysinfo::memory();
     let gb = |b: u64| (b as f64 / (1u64 << 30) as f64 * 10.0).round() / 10.0;
     json!({
@@ -115,6 +115,8 @@ fn host_json(gpu_name: Option<&str>, gpu_requested: bool, caps: &PlaybackCaps) -
         "ramAvailableGb": mem.map(|m| gb(m.available)),
         "gpu": gpu_name,
         "gpuRequested": gpu_requested,
+        "gpuInitMs": gpu_init_ms,
+        "eagerPipelines": eager_pipelines,
         "playbackCaps": caps.to_json(),
         "poolThreads": caps.decode_pool_threads,
         "prefetchDooh6880": caps.prefetch_depth(108 << 20, 1 << 30),
@@ -323,7 +325,7 @@ fn prime_decode(pool: &MediaPool, footage: &Footage, n: usize, scale: f64) -> Re
     Ok(())
 }
 
-fn time_composite(p: &Project, pool: &MediaPool, cid: ItemId, n: usize, scale: f64, cache: bool, gpu: Option<&Gpu>) -> Vec<f64> {
+fn time_composite(p: &Project, pool: &MediaPool, cid: ItemId, n: usize, scale: f64, cache: bool, gpu: Option<&Gpu>, display: bool) -> Vec<f64> {
     let Some(comp) = p.comp(cid) else { return Vec::new() };
     let layer_cache = LayerCache::default();
     let backend = if gpu.is_some() { Backend::Gpu } else { Backend::Cpu };
@@ -336,9 +338,16 @@ fn time_composite(p: &Project, pool: &MediaPool, cid: ItemId, n: usize, scale: f
         }
         r.accel = gpu.map(|g| g as &dyn effectcraft_render::Accelerator);
         let t0 = Instant::now();
-        let img = r.comp_frame(cid, t);
-        times.push(t0.elapsed().as_secs_f64() * 1e3);
-        std::hint::black_box(&img);
+        if let (Some(g), true) = (gpu, display) {
+            let frame = g.render_display(&r, cid, t);
+            g.wait();
+            times.push(t0.elapsed().as_secs_f64() * 1e3);
+            std::hint::black_box(&frame);
+        } else {
+            let img = r.comp_frame(cid, t);
+            times.push(t0.elapsed().as_secs_f64() * 1e3);
+            std::hint::black_box(&img);
+        }
     }
     times
 }
@@ -385,22 +394,45 @@ fn time_gpu_upload(gpu: &Gpu, pool: &MediaPool, footage: &Footage, n: usize) -> 
     Ok(times)
 }
 
-fn time_e2e(p: &Project, pool: &MediaPool, cid: ItemId, n: usize, scale: f64) -> Result<Vec<f64>, String> {
+fn time_e2e(p: &Project, pool: &MediaPool, cid: ItemId, n: usize, scale: f64, gpu: Option<&Gpu>) -> Result<Vec<f64>, String> {
     let Some(comp) = p.comp(cid) else { return Ok(Vec::new()) };
     pool.clear_frames();
     pool.set_read_ahead(false);
+    let layer_cache = LayerCache::default();
+    let backend = if gpu.is_some() { Backend::Gpu } else { Backend::Cpu };
     let mut times = Vec::with_capacity(n);
     for i in 0..n as i64 {
         let t = comp.frame_rate.tick_of(i);
         let t0 = Instant::now();
-        let r = Renderer::new(p, pool, RenderOpts { scale, parallel: true, motion_blur: false, ..Default::default() });
-        let img = r.comp_frame(cid, t);
-        let ci = to_color_image(&img);
-        let copy = ci.pixels.clone();
-        times.push(t0.elapsed().as_secs_f64() * 1e3);
-        std::hint::black_box(&copy);
+        let mut r = Renderer::new(p, pool, RenderOpts { scale, parallel: true, backend, motion_blur: false, ..Default::default() });
+        r.cache = Some(&layer_cache);
+        r.accel = gpu.map(|g| g as &dyn effectcraft_render::Accelerator);
+        if let Some(g) = gpu {
+            let frame = g.render_display(&r, cid, t);
+            g.wait();
+            times.push(t0.elapsed().as_secs_f64() * 1e3);
+            std::hint::black_box(&frame);
+        } else {
+            let img = r.comp_frame(cid, t);
+            let ci = to_color_image(&img);
+            let copy = ci.pixels.clone();
+            times.push(t0.elapsed().as_secs_f64() * 1e3);
+            std::hint::black_box(&copy);
+        }
     }
     Ok(times)
+}
+
+fn probe_pick(cpu: &[f64], gpu: &[f64]) -> Json {
+    let cpu_ms = stats(cpu).0;
+    let gpu_ms = stats(gpu).0;
+    let gpu_wins = Gpu::gpu_wins(cpu_ms, gpu_ms);
+    json!({
+        "cpuMs": round2(cpu_ms),
+        "gpuDisplayMs": round2(gpu_ms),
+        "pick": if gpu_wins { "gpu" } else { "cpu" },
+        "gpuWins": gpu_wins,
+    })
 }
 
 fn clip_info(path: &Path, footage: &Footage) -> Json {
@@ -480,7 +512,7 @@ fn profile_movie(scenario: &str, path: &Path, n: usize, gpu: Option<&Gpu>, runs:
     p.settings.bit_depth = effectcraft_engine::project::BitDepth::Bpc8;
     let cid = one_layer_comp(&mut p, scenario, footage.clone());
     prime_decode(&pool, &footage, n, 1.0)?;
-    let composite = time_composite(&p, &pool, cid, n, 1.0, true, None);
+    let composite = time_composite(&p, &pool, cid, n, 1.0, true, None, false);
     let row = stage_json(scenario, &codec, w, h, 1, 1.0, "composite_cpu_warm", &composite);
     print_stage(&row);
     runs.push(row);
@@ -505,26 +537,61 @@ fn profile_movie(scenario: &str, path: &Path, n: usize, gpu: Option<&Gpu>, runs:
             }
             Err(e) => note(&format!("    gpu_write_texture_f32         skipped ({e})")),
         }
-        let gpu_comp = time_composite(&p, &pool, cid, n, 1.0, true, Some(g));
-        let row = stage_json(scenario, &codec, w, h, 1, 1.0, "composite_gpu_warm", &gpu_comp);
+        let gpu_comp = time_composite(&p, &pool, cid, n, 1.0, true, Some(g), false);
+        let row = stage_json(scenario, &codec, w, h, 1, 1.0, "composite_gpu_readback", &gpu_comp);
         print_stage(&row);
         runs.push(row);
+        let gpu_disp = time_composite(&p, &pool, cid, n, 1.0, true, Some(g), true);
+        let row = stage_json(scenario, &codec, w, h, 1, 1.0, "composite_gpu_display", &gpu_disp);
+        print_stage(&row);
+        runs.push(row);
+        let pick = probe_pick(&composite, &gpu_disp);
+        note(&format!(
+            "    probe_pick                   {:>8}  (CPU {:.2} ms vs GPU display {:.2} ms)",
+            pick["pick"].as_str().unwrap_or("?"),
+            pick["cpuMs"].as_f64().unwrap_or(0.0),
+            pick["gpuDisplayMs"].as_f64().unwrap_or(0.0)
+        ));
+        runs.push(json!({
+            "scenario": scenario,
+            "codec": codec,
+            "width": w,
+            "height": h,
+            "layers": 1,
+            "scale": 1.0,
+            "stage": "probe_pick",
+            "pick": pick["pick"],
+            "cpuMs": pick["cpuMs"],
+            "gpuDisplayMs": pick["gpuDisplayMs"],
+            "gpuWins": pick["gpuWins"],
+        }));
     }
 
-    let e2e = time_e2e(&p, &pool, cid, n, 1.0)?;
+    let e2e = time_e2e(&p, &pool, cid, n, 1.0, None)?;
     let row = stage_json(scenario, &codec, w, h, 1, 1.0, "e2e_decode_composite_upload", &e2e);
     print_stage(&row);
     runs.push(row);
 
-    let e2e_half = time_e2e(&p, &pool, cid, n, 0.5)?;
+    let e2e_half = time_e2e(&p, &pool, cid, n, 0.5, None)?;
     let row = stage_json(scenario, &codec, w, h, 1, 0.5, "e2e_half", &e2e_half);
     print_stage(&row);
     runs.push(row);
 
-    let e2e_quarter = time_e2e(&p, &pool, cid, n, 0.25)?;
+    let e2e_quarter = time_e2e(&p, &pool, cid, n, 0.25, None)?;
     let row = stage_json(scenario, &codec, w, h, 1, 0.25, "e2e_quarter", &e2e_quarter);
     print_stage(&row);
     runs.push(row);
+
+    if let Some(g) = gpu {
+        let e2e_gpu = time_e2e(&p, &pool, cid, n, 1.0, Some(g))?;
+        let row = stage_json(scenario, &codec, w, h, 1, 1.0, "e2e_gpu_display", &e2e_gpu);
+        print_stage(&row);
+        runs.push(row);
+        let e2e_gpu_half = time_e2e(&p, &pool, cid, n, 0.5, Some(g))?;
+        let row = stage_json(scenario, &codec, w, h, 1, 0.5, "e2e_gpu_half", &e2e_gpu_half);
+        print_stage(&row);
+        runs.push(row);
+    }
 
     Ok(footage)
 }
@@ -539,30 +606,66 @@ fn profile_four_layer(scenario: &str, video: Footage, still: Footage, n: usize, 
     pool.set_read_ahead(false);
     note(&format!("  {scenario}: {w}×{h}  4 layers (video + still + solid + text)"));
 
-    let e2e = time_e2e(&p, &pool, cid, n, 1.0)?;
+    let e2e = time_e2e(&p, &pool, cid, n, 1.0, None)?;
     let row = stage_json(scenario, &codec, w, h, 4, 1.0, "e2e_decode_composite_upload", &e2e);
     print_stage(&row);
     runs.push(row);
 
     prime_decode(&pool, &video, n, 1.0)?;
-    let composite = time_composite(&p, &pool, cid, n, 1.0, true, None);
+    let composite = time_composite(&p, &pool, cid, n, 1.0, true, None, false);
     let row = stage_json(scenario, &codec, w, h, 4, 1.0, "composite_cpu_warm", &composite);
     print_stage(&row);
     runs.push(row);
 
-    let half = time_e2e(&p, &pool, cid, n, 0.5)?;
+    let half = time_e2e(&p, &pool, cid, n, 0.5, None)?;
     let row = stage_json(scenario, &codec, w, h, 4, 0.5, "e2e_half", &half);
     print_stage(&row);
     runs.push(row);
 
-    let quarter = time_e2e(&p, &pool, cid, n, 0.25)?;
+    let quarter = time_e2e(&p, &pool, cid, n, 0.25, None)?;
     let row = stage_json(scenario, &codec, w, h, 4, 0.25, "e2e_quarter", &quarter);
     print_stage(&row);
     runs.push(row);
 
     if let Some(g) = gpu {
-        let gpu_comp = time_composite(&p, &pool, cid, n, 1.0, true, Some(g));
-        let row = stage_json(scenario, &codec, w, h, 4, 1.0, "composite_gpu_warm", &gpu_comp);
+        let gpu_comp = time_composite(&p, &pool, cid, n, 1.0, true, Some(g), false);
+        let row = stage_json(scenario, &codec, w, h, 4, 1.0, "composite_gpu_readback", &gpu_comp);
+        print_stage(&row);
+        runs.push(row);
+        let gpu_disp = time_composite(&p, &pool, cid, n, 1.0, true, Some(g), true);
+        let row = stage_json(scenario, &codec, w, h, 4, 1.0, "composite_gpu_display", &gpu_disp);
+        print_stage(&row);
+        runs.push(row);
+        let gpu_disp_half = time_composite(&p, &pool, cid, n, 0.5, true, Some(g), true);
+        let row = stage_json(scenario, &codec, w, h, 4, 0.5, "composite_gpu_display_half", &gpu_disp_half);
+        print_stage(&row);
+        runs.push(row);
+        let pick = probe_pick(&composite, &gpu_disp);
+        note(&format!(
+            "    probe_pick                   {:>8}  (CPU {:.2} ms vs GPU display {:.2} ms)",
+            pick["pick"].as_str().unwrap_or("?"),
+            pick["cpuMs"].as_f64().unwrap_or(0.0),
+            pick["gpuDisplayMs"].as_f64().unwrap_or(0.0)
+        ));
+        runs.push(json!({
+            "scenario": scenario,
+            "codec": codec,
+            "width": w,
+            "height": h,
+            "layers": 4,
+            "scale": 1.0,
+            "stage": "probe_pick",
+            "pick": pick["pick"],
+            "cpuMs": pick["cpuMs"],
+            "gpuDisplayMs": pick["gpuDisplayMs"],
+            "gpuWins": pick["gpuWins"],
+        }));
+        let e2e_gpu = time_e2e(&p, &pool, cid, n, 1.0, Some(g))?;
+        let row = stage_json(scenario, &codec, w, h, 4, 1.0, "e2e_gpu_display", &e2e_gpu);
+        print_stage(&row);
+        runs.push(row);
+        let e2e_gpu_half = time_e2e(&p, &pool, cid, n, 0.5, Some(g))?;
+        let row = stage_json(scenario, &codec, w, h, 4, 0.5, "e2e_gpu_half", &e2e_gpu_half);
         print_stage(&row);
         runs.push(row);
     }
@@ -576,8 +679,17 @@ pub(crate) fn run(args: &super::Args) -> Result<(), Failure> {
     let n_prores = n.min(8);
     let n_h264 = n.clamp(8, 24);
     let want_gpu = args.flag("--gpu");
+    let t_gpu = Instant::now();
     let gpu = want_gpu.then(Gpu::headless).flatten();
+    let gpu_init_ms = if want_gpu { round2(t_gpu.elapsed().as_secs_f64() * 1e3) } else { 0.0 };
     let gpu_name = gpu.as_ref().map(effectcraft_render::Accelerator::name);
+    let gpu_kernels = gpu.as_ref().map(Gpu::compiled_kernels);
+    if want_gpu {
+        match &gpu_name {
+            Some(name) => note(&format!("GPU init {gpu_init_ms:.0} ms  {name}  eager pipelines {}", gpu_kernels.unwrap_or(0))),
+            None => note("GPU requested but no usable adapter; remaining stages stay on the CPU"),
+        }
+    }
     let dir = std::env::temp_dir().join(format!("effectcraft-playback-profile-{}", std::process::id()));
     note(&format!("playback profile: {n_prores} ProRes frames, {n_h264} H.264 frames, dir {}", dir.display()));
     let (prores, h264, still) = generate_clips(&dir, n_prores, n_h264).map_err(Failure::Error)?;
@@ -622,18 +734,21 @@ pub(crate) fn run(args: &super::Args) -> Result<(), Failure> {
                 .collect(),
         );
     }
+    if let Some(pick) = runs.iter().rev().find(|r| r["stage"] == "probe_pick" && r["layers"] == 4) {
+        caps.pick_from_times(pick["cpuMs"].as_f64().unwrap_or(0.0), pick["gpuDisplayMs"].as_f64().unwrap_or(0.0));
+    }
     caps.install_rayon();
     hwdec::register();
 
     let report = json!({
         "targetFps": 25.0,
-        "host": host_json(gpu_name.as_deref(), want_gpu, &caps),
+        "host": host_json(gpu_name.as_deref(), want_gpu, gpu_init_ms, gpu_kernels, &caps),
         "pipeline": {
             "decode": "Streamed FileReader (no whole-file fs::read). D3D11VA/Vulkan Video probed; factory returns None so FilmCraft CPU runs. ProRes never HW. Ampere H.264 max 4096 so 6880-wide H.264 stays CPU. Reduced-res: FrameRequest.scale is passed (Half=500, Quarter=250 milles); if the decoder returns native pixels, YUV convert point-samples every 2nd/4th sample so RAM does not keep a full f32 frame. True skip-IDCT ProRes is a FilmCraft decoder change.",
             "color": "CPU YUV→premultiplied f32 RGBA (BT.601/709/2020, limited/full), row-parallel. Viewer presents RGBA8 (no readback when gpu_display). Playback frames are 8-bit or f16; 32-bit float is for final renders.",
             "prefetch": "Sized from bytes/frame and RAM (2–32); this profile still disables read-ahead so decode timings are honest.",
             "cache": "MediaPool LRU 1 GiB decoded f32 frames; RAM preview up to ~3 GiB (green timeline bar); disk cache of rendered frames with a Preferences size cap (blue bar). Idle/playback render-ahead (cache_frames_when_idle default ON, 0.4s quiet). JPEG half-res proxy cache (20 GiB default). Layer cache keys footage with masks/effects by source time; static precomps omit nested time.",
-            "composite": "Footage fast path: a single untransformed/simple footage layer skips the compositor and uses the decoded frame (CPU canvas or GPU upload). GPU present via Gpu::render_display / Accelerator::comp_frame (shared with EncodeCraft — do not add a second compositor). CPU SIMD fallback. Preview precision RGBA8 display / f16 when the adapter stores it; renders stay f32.",
+            "composite": "Footage fast path: a single untransformed/simple footage layer skips the compositor and uses the decoded frame (CPU canvas or GPU upload_buf of the cached Arc). GPU playback uses Gpu::render_display (RGBA8 texture, no readback). Accelerator::comp_frame still reads back for EncodeCraft; AutoPick measures both paths and keeps CPU when GPU cannot win. Preview precision RGBA8 display / f16 when the adapter stores it; renders stay f32. Effect kernels compile on first use.",
             "pool": "One rayon work-stealing pool, max(1, cores−2).",
             "audioSync": "Audio-master clock; Drop frames to keep sound in sync (default ON). Adaptive Auto res Full→Half→Quarter while playing (view.adaptivePlayback / viewer.autoResToggle, default ON). Off: stay at the chosen resolution and drop frames.",
         },

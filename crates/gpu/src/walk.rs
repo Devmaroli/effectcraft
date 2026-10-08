@@ -32,7 +32,9 @@ pub(crate) fn render<'g>(e: &mut Enc<'g>, r: &Renderer, comp_id: ItemId, t: Tick
     if r.depth() > 16 || !e.g.fits(w, h) {
         return None;
     }
-    let mut canvas = if let Some(fast) = r.simple_footage_canvas(&ctx, w, h) {
+    let mut canvas = if let Some(fast) = r.simple_footage_buf(&ctx, w, h) {
+        e.g.upload_buf(&fast)?
+    } else if let Some(fast) = r.simple_footage_canvas(&ctx, w, h) {
         e.g.upload_image(&fast)?
     } else {
         let mut canvas = e.zeros(w, h);

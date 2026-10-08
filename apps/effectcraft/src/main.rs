@@ -71,6 +71,7 @@ fn main() -> eframe::Result {
             // Wayland matches the window to `ai.storyteller.effectcraft.desktop` by this ID.
             .with_app_id(appimage::APP_ID),
         event_loop_builder: agent_event_loop(control_port.is_some()),
+        wgpu_options: effectcraft_ui_egui::desktop_wgpu_options(),
         ..Default::default()
     };
     eframe::run_native(

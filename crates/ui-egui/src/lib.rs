@@ -30,6 +30,20 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
 
 pub use control::ControlRequest;
+
+/// wgpu instance for the desktop window: DX12 ahead of Vulkan on Windows, HighPerformance
+/// (`WGPU_BACKEND` still overrides).
+pub fn desktop_wgpu_options() -> eframe::egui_wgpu::WgpuConfiguration {
+    let mut opts = eframe::egui_wgpu::WgpuConfiguration::default();
+    if let eframe::egui_wgpu::WgpuSetup::CreateNew(create) = &mut opts.wgpu_setup {
+        let native = effectcraft_gpu::native_instance_descriptor();
+        create.instance_descriptor.backends = native.backends;
+        create.instance_descriptor.backend_options = native.backend_options;
+        create.power_preference = effectcraft_gpu::wgpu::PowerPreference::HighPerformance;
+        create.native_adapter_selector = Some(Arc::new(effectcraft_gpu::select_native_adapter));
+    }
+    opts
+}
 use dock::PanelKind;
 use effectcraft_engine::Session;
 use effectcraft_engine::project::ItemId;

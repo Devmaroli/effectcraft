@@ -13,6 +13,10 @@ need = [
     "UninstallDisplayIcon",
     "effectcraft.ico",
     "effectcraft-cli.exe",
+    r"Uninstall\EffectCraft",
+    "/S",
+    "/VERYSILENT",
+    "RemoveLegacyNsisInstall",
 ]
 missing = [s for s in need if s not in iss]
 if missing:

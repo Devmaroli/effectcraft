@@ -59,6 +59,22 @@ fn footage_comp(size: (u32, u32)) -> (Project, ItemId) {
 }
 
 #[test]
+fn simple_footage_buf_reuses_the_layer_cache_arc() {
+    let (p, cid) = footage_comp((64, 32));
+    let cache = crate::LayerCache::default();
+    let mut r = Renderer::new(&p, &Flat, RenderOpts::default());
+    r.cache = Some(&cache);
+    let ctx = r.eval_ctx(cid, Tick::ZERO).unwrap();
+    let a = r.simple_footage_buf(&ctx, 64, 32).expect("identity footage");
+    let b = r.simple_footage_buf(&ctx, 64, 32).expect("second lookup");
+    // Raw footage is not stored in the layer cache (the media pool holds it), so the two
+    // Buf Arcs need not be identical; both must still be the canvas-sized identity frame.
+    assert_eq!((a.img.width, a.img.height), (64, 32));
+    assert_eq!((b.img.width, b.img.height), (64, 32));
+    assert_eq!(a.img.get(8, 8), [0.2, 0.4, 0.8, 1.0]);
+}
+
+#[test]
 fn untransformed_footage_uses_the_fast_path() {
     let (p, cid) = footage_comp((64, 32));
     let r = Renderer::new(&p, &Flat, RenderOpts::default());

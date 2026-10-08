@@ -1,11 +1,6 @@
 // Compositing and effect kernels (rgba32float output). Parameter layouts are documented next to
 // each entry point and mirrored by the Rust dispatch code (src/ops.rs, src/effects.rs).
-
-@group(0) @binding(3) var out: texture_storage_2d<rgba32float, write>;
-
-fn out_dims() -> vec2<i32> {
-    return vec2<i32>(textureDimensions(out));
-}
+// Bindings (`out`, `out_dims`) live in `common.wgsl` so each family compiles on its own.
 
 // ---------------------------------------------------------------- compositing
 
@@ -983,4 +978,17 @@ fn fill(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     textureStore(out, p, P.f[0]);
+}
+
+// Tightly packed RGBA f32 from `data` into `out`. Used when CPU row bytes are not a multiple
+// of 256 (wgpu texture copies require that alignment; 6880×16 = 110080 is 128 bytes short).
+@compute @workgroup_size(16, 16)
+fn unpack(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let dims = out_dims();
+    let p = vec2<i32>(gid.xy);
+    if (p.x >= dims.x || p.y >= dims.y) {
+        return;
+    }
+    let i = (u32(p.y) * u32(dims.x) + u32(p.x)) * 4u;
+    textureStore(out, p, vec4<f32>(data[i], data[i + 1u], data[i + 2u], data[i + 3u]));
 }

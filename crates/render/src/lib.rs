@@ -1910,6 +1910,23 @@ impl<'a> Renderer<'a> {
     /// footage layer: skip masks, effects, and the compositor walk. `None` = use the full walk.
     /// The image is in blending space at canvas size (callers still run the output colour pipe).
     pub fn simple_footage_canvas(&self, ctx: &EvalCtx<'a>, canvas_w: u32, canvas_h: u32) -> Option<Image> {
+        let layer = self.simple_footage_layer(ctx)?;
+        let buf = self.source(ctx, layer)?;
+        let mut img =
+            if buf.img.width == canvas_w && buf.img.height == canvas_h { buf.img } else { effectcraft_raster::resample(&buf.img, canvas_w, canvas_h) };
+        self.pipe.quantize(&mut img);
+        Some(img)
+    }
+
+    /// Cached layer buffer for [`Self::simple_footage_canvas`] when it already matches the
+    /// canvas size (GPU uploads reuse the `Arc` instead of copying 6880-wide f32 every frame).
+    pub fn simple_footage_buf(&self, ctx: &EvalCtx<'a>, canvas_w: u32, canvas_h: u32) -> Option<std::sync::Arc<Buf>> {
+        let layer = self.simple_footage_layer(ctx)?;
+        let buf = self.blend_layer_buf(ctx, layer)?;
+        (buf.img.width == canvas_w && buf.img.height == canvas_h).then_some(buf)
+    }
+
+    fn simple_footage_layer(&self, ctx: &EvalCtx<'a>) -> Option<&'a Layer> {
         if self.depth != 0 || self.opts.roi.is_some() {
             return None;
         }
@@ -1946,11 +1963,7 @@ impl<'a> Renderer<'a> {
         if !footage_fills_comp(&m, f.width as f64, f.height as f64, ctx.comp.width as f64, ctx.comp.height as f64) {
             return None;
         }
-        let buf = self.source(ctx, layer)?;
-        let mut img =
-            if buf.img.width == canvas_w && buf.img.height == canvas_h { buf.img } else { effectcraft_raster::resample(&buf.img, canvas_w, canvas_h) };
-        self.pipe.quantize(&mut img);
-        Some(img)
+        Some(layer)
     }
 
     /// The layers drawn at the context time, bottom to top (solo, guides and visibility

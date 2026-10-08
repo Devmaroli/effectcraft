@@ -143,10 +143,25 @@ impl PlaybackCaps {
 
     /// GPU adapter appeared (or was rebuilt after device-lost).
     pub fn with_gpu(&mut self, gpu: GpuCaps) {
-        let texture = true;
         self.preview_precision = if gpu.f16_storage { PreviewPrecision::F16Gpu } else { PreviewPrecision::Rgba8Display };
-        self.composite = if texture { CompositePath::GpuTexture } else { CompositePath::GpuReadback };
+        // Viewer present stays on a GPU texture (no readback). Auto still measures CPU vs GPU
+        // per comp; [`Self::pick_from_times`] records the probe's choice.
+        self.composite = CompositePath::GpuTexture;
         self.gpu = Some(gpu);
+    }
+
+    /// Hardware probe: keep GPU present only when the display path beat the CPU.
+    pub fn pick_from_times(&mut self, cpu_ms: f64, gpu_display_ms: f64) {
+        if self.gpu.is_none() {
+            self.composite = CompositePath::CpuSimd;
+            self.preview_precision = PreviewPrecision::F32Cpu;
+            return;
+        }
+        if effectcraft_render::AutoPick::gpu_wins(cpu_ms, gpu_display_ms) {
+            self.composite = CompositePath::GpuTexture;
+        } else {
+            self.composite = CompositePath::CpuSimd;
+        }
     }
 
     /// Hardware-decode profiles from a platform probe (empty = CPU only).
@@ -328,6 +343,26 @@ mod tests {
         assert!(c.video_decode.is_empty());
         assert_eq!(c.composite, CompositePath::CpuSimd);
         assert!(matches!(c.pick_decode("hevc", "420", 10, 1920, 1080), DecodePath::Cpu { .. }));
+    }
+
+    #[test]
+    fn pick_from_times_prefers_cpu_when_gpu_is_slower() {
+        let mut c = PlaybackCaps::probe_host();
+        c.with_gpu(GpuCaps {
+            vendor: "NVIDIA".into(),
+            device: "RTX 3070 Ti".into(),
+            backend: "Dx12".into(),
+            vram_bytes: Some(8 << 30),
+            vendor_id: 0x10DE,
+            nvenc: true,
+            f16_storage: true,
+        });
+        assert_eq!(c.composite, CompositePath::GpuTexture);
+        // Kapildev's 6880 readback path: GPU 6.5 fps (~154 ms) vs CPU ~30 fps (~33 ms).
+        c.pick_from_times(33.0, 154.0);
+        assert_eq!(c.composite, CompositePath::CpuSimd);
+        c.pick_from_times(88.0, 20.0);
+        assert_eq!(c.composite, CompositePath::GpuTexture);
     }
 
     #[test]
