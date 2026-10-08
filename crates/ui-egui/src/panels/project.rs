@@ -249,7 +249,8 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         // The details stay inside the panel (a margin on the right), cut short with "…".
         let tx = thumb.max.x + 10.0;
         let max_w = head.max.x - 10.0 - tx;
-        let r = widgets::text_fit(&p, pos2(tx, thumb.min.y + 6.0), Align2::LEFT_CENTER, &it.name, Tokens::semibold(12.0), max_w, t.text);
+        let shown = middle_name(&p, &it.name, Tokens::semibold(12.0), max_w);
+        let r = widgets::text_fit(&p, pos2(tx, thumb.min.y + 6.0), Align2::LEFT_CENTER, &shown, Tokens::semibold(12.0), max_w, t.text);
         app.auto.add("project.details.name", r, &it.name);
         let mut lines = vec![];
         if let Some((w, h)) = it.dimensions() {
