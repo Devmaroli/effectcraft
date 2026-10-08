@@ -105,7 +105,7 @@ fn range_based_on_words_and_lines() {
     set(l, "text/animators/#1/selectors/#1/end", Value::Scalar(50.0));
     let s = selection(&p, cid, 0.0, a);
     assert_eq!(s.len(), 7, "{s:?}");
-    assert!(s.iter().any(|v| *v > 0.0) && s.iter().any(|v| *v == 0.0), "keep-joins selector still ranges: {s:?}");
+    assert!(s.iter().any(|v| *v > 0.0) && s.contains(&0.0), "keep-joins selector still ranges: {s:?}");
 }
 
 #[test]
