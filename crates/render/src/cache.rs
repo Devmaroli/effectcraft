@@ -502,9 +502,9 @@ fn group_animated(g: &PropGroup) -> bool {
 /// Content key for a cached composite of consecutive static layers (a "plate"): canvas size,
 /// each layer's processed pixels, its transform into the comp, blend mode and opacity.
 ///
-/// `proxy` and `inherited` must be part of the key: the same stills composite differently
-/// under Proxy Use (Use None vs Current Settings) and when a parent precomp's Draft/Best
-/// switch is inherited (Switches Affect Nested Comps).
+/// `proxy`, `inherited` and each layer's pixel switches must be part of the key: the same
+/// stills composite differently under Proxy Use, when a parent precomp's Draft/Best switch
+/// is inherited, and when Continuously Rasterize (Collapse) is on.
 pub fn plate_key(
     ctx: &EvalCtx,
     layers: &[&Layer],
@@ -540,6 +540,7 @@ pub fn plate_key(
                 styles_key(ctx, layer, k).hash(&mut h);
             }
         }
+        hash_debug(&mut h, &layer.switches.pixels());
         hash_debug(&mut h, &layer.blend_mode);
         ctx.opacity(layer).to_bits().hash(&mut h);
         let (m, _) = ctx.layer_to_comp(layer);
