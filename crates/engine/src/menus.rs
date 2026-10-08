@@ -691,6 +691,7 @@ Composition
     Send Sorted Names to Screen Manager | screen.sorter.send
     Select Pasted Screen Names | screen.manager.select
     Apply Screen Manager Presets | screen.manager.apply
+    Apply SizeMaster Presets | screen.sizeMaster.apply
     Build Combiner Compositions | screen.manager.combine
     Check Composition Sizes | screen.matcher.check
   ---

@@ -563,11 +563,11 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!("screen.suite.tab", "Screen Suite Tab", [], None, "{tab: booking|build|adapter|deliver|qc}", always, suite_tab),
         query!("screen.suite.state", "Screen Suite state", "{}", suite_state),
         query!("screen.suite.alerts", "In-app Screen Suite alerts (banner + highlighted rows)", "{}", suite_alerts),
-        cmd!("screen.adapter.parse", "Parse Adapter Tag", ["Composition", "Screen Suite"], None, "{text?}", always, adapter_parse),
-        cmd!("screen.adapter.apply", "Apply Adapter Tag", ["Composition", "Screen Suite"], None, "{text?}", always, adapter_apply),
-        cmd!("screen.freeze", "Freeze Frame (Screen Suite)", ["Composition", "Screen Suite"], None, "{layers?}", always, freeze),
-        cmd!("screen.screenshot", "Save Screenshot", ["Composition", "Screen Suite"], None, "{path?, folder?}", always, screenshot),
-        cmd!("screen.rename", "Rename Layer (Screen Suite)", ["Composition", "Screen Suite"], None, "{name}", always, rename),
+        cmd!("screen.adapter.parse", "Parse Adapter Tag", [], None, "{text?}", always, adapter_parse),
+        cmd!("screen.adapter.apply", "Apply Adapter Tag", [], None, "{text?}", always, adapter_apply),
+        cmd!("screen.freeze", "Freeze Frame (Screen Suite)", [], None, "{layers?}", always, freeze),
+        cmd!("screen.screenshot", "Save Screenshot", [], None, "{path?, folder?}", always, screenshot),
+        cmd!("screen.rename", "Rename Layer (Screen Suite)", [], None, "{name}", always, rename),
     ]
 }
 
