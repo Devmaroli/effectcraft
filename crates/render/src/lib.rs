@@ -53,6 +53,8 @@ pub trait FootageSource: Send + Sync {
     }
     /// Change the sequential read-ahead depth (sources without a decoder ignore it).
     fn set_prefetch_depth(&self, _frames: usize) {}
+    /// Size sequential prefetch from decoded frame bytes and available RAM.
+    fn size_prefetch(&self, _bytes_per_frame: usize, _ram_available: u64) {}
     /// `frames` interleaved stereo sample frames of `item`'s audio from source time `t` at
     /// `rate` Hz (`None` when unavailable).
     fn audio(&self, _item: ItemId, _footage: &Footage, _t: Tick, _frames: usize, _rate: u32) -> Option<Vec<f32>> {

@@ -251,6 +251,11 @@ impl MediaPool {
         self.inner.prefetch_depth.store(frames.min(32) as u64, Ordering::Relaxed);
     }
 
+    /// Size sequential prefetch from decoded frame bytes and available RAM (2–32).
+    pub fn size_prefetch(&self, bytes_per_frame: usize, ram_available: u64) {
+        self.set_prefetch_depth(crate::prefetch_depth(bytes_per_frame, ram_available, self.budget()));
+    }
+
     pub fn stats(&self) -> PoolStats {
         let i = &self.inner;
         let c = lock(&i.cache);
@@ -500,11 +505,15 @@ impl Inner {
         if let Some(s) = lock(&self.sources).get(path) {
             return s.clone();
         }
-        // open outside the lock (reading and parsing a large file takes a moment)
-        let opened = self.read(path).and_then(|bytes| {
-            let name = std::path::Path::new(&**path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-            filmcraft_codecs::open_bytes(&name, bytes).map_err(MediaError::from)
-        });
+        // Stream from disk when the bytes are not already in memory (web builds / tests).
+        let opened = if lock(&self.files).contains_key(&**path) {
+            self.read(path).and_then(|bytes| {
+                let name = std::path::Path::new(&**path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                filmcraft_codecs::open_bytes(&name, bytes).map_err(MediaError::from)
+            })
+        } else {
+            crate::stream::open_path(path)
+        };
         let opened = match opened {
             Ok(s) => Some(s),
             Err(e) => {
@@ -707,6 +716,10 @@ impl FootageSource for MediaPool {
 
     fn set_prefetch_depth(&self, frames: usize) {
         MediaPool::set_prefetch_depth(self, frames);
+    }
+
+    fn size_prefetch(&self, bytes_per_frame: usize, ram_available: u64) {
+        MediaPool::size_prefetch(self, bytes_per_frame, ram_available);
     }
 
     fn vector_frame(&self, _item: ItemId, footage: &Footage, scale: f64) -> Option<Arc<Image>> {

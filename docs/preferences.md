@@ -48,7 +48,13 @@ Commands (CLI, MCP, control channel):
 - `autoSave.saveOnRenderStart`: Save When Starting Render Queue
 - `composition.showRenderingProgress`: Show Rendering Progress in Info Panel and Flowchart
 - `previews.adaptiveResolutionLimit`: Adaptive Resolution Limit (the lowest resolution Fast Previews ▸
-  Adaptive Resolution drops to while you drag; a playing preview keeps the viewer's resolution)
+  Adaptive Resolution and Auto-while-playing drop to)
+- `previews.adaptivePlayback`: Auto resolution while playing (Full → Half → Quarter when behind
+  the clock; restores the chosen resolution when paused or stopped). Default on.
+- `previews.dropFrames`: Drop frames to keep sound in sync (audio-master clock; late uncached
+  video frames are skipped). Default on.
+- `previews.showPerformance`: View ▸ Performance readout (decode path, GPU/CPU composite,
+  playback fps, dropped frames, cache fill, proxy use)
 - `previews.cacheFramesWhenIdle`: Cache Frames When Idle (Composition ▸ Preview): after a second
   without input or edits, the viewer renders the work area into the RAM preview in the
   background, from the current time on, until it is cached or the budget is full
@@ -123,6 +129,8 @@ Commands (CLI, MCP, control channel):
 - `disk.mediaCacheFolder`: audio waveform summaries kept between sessions (`Peaks/`)
 - `disk.conformedMediaFolder`: decoded (conformed) footage audio, written once per file and
   sample rate and read back instead of decoding again
+- `disk.proxyCacheFolder` / `disk.proxyCacheMaxGb`: automatic JPEG half-res proxies for ProRes HQ
+  and oversize files (playback only; renders and EncodeCraft always use the originals)
 - `memory.ramReservedGb`: the cache budgets together leave this much physical memory free
 - `memory.reduceCacheWhenLow`: cache budgets halve while the system is low on memory (checked
   every 30 s by the desktop app, on a background thread)

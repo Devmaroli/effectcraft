@@ -1072,7 +1072,10 @@ View
     Half | view.res.half
     Third | view.res.third
     Quarter | view.res.quarter
+    Auto | view.res.auto
     Custom... | view.res.custom
+    ---
+    Performance Readout | view.performance
   ---
   Use Display Color Management | view.displayColorManagement
   Simulate Output

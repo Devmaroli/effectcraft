@@ -13,15 +13,16 @@ use std::time::Instant;
 
 use effectcraft_engine::color::{BlendMode, Label};
 use effectcraft_engine::keyframe::{Justify, Keyframe, TextDoc, Value};
+use effectcraft_engine::playback_caps::PlaybackCaps;
 use effectcraft_engine::project::build::{self, Ids};
 use effectcraft_engine::project::{Comp, Footage, ItemId, ItemKind, Layer, LayerSource, Project, Solid};
 use effectcraft_engine::sysinfo;
 use effectcraft_gpu::Gpu;
-use effectcraft_media::{probe_single, MediaPool};
+use effectcraft_media::{MediaPool, hwdec, probe_single};
 use effectcraft_render::{Backend, LayerCache, RenderOpts, Renderer};
 use effectcraft_time::{FrameRate, Tick};
 use effectcraft_ui_egui::frames::to_color_image;
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
 use super::Failure;
 
@@ -101,7 +102,7 @@ fn simd_level() -> Vec<&'static str> {
     }
 }
 
-fn host_json(gpu_name: Option<&str>, gpu_requested: bool) -> Json {
+fn host_json(gpu_name: Option<&str>, gpu_requested: bool, caps: &PlaybackCaps) -> Json {
     let mem = sysinfo::memory();
     let gb = |b: u64| (b as f64 / (1u64 << 30) as f64 * 10.0).round() / 10.0;
     json!({
@@ -114,7 +115,12 @@ fn host_json(gpu_name: Option<&str>, gpu_requested: bool) -> Json {
         "ramAvailableGb": mem.map(|m| gb(m.available)),
         "gpu": gpu_name,
         "gpuRequested": gpu_requested,
-        "note": "This cloud VM has no NVIDIA GPU and no /dev/dri. Numbers are CPU-only; Kapildev's RTX 3070 Ti will be faster on compositing and on H.264/H.265 decode if NVDEC is wired, but not on ProRes decode (NVDEC has no ProRes).",
+        "playbackCaps": caps.to_json(),
+        "poolThreads": caps.decode_pool_threads,
+        "prefetchDooh6880": caps.prefetch_depth(108 << 20, 1 << 30),
+        "prefetch1080p": caps.prefetch_depth(1920 * 1080 * 16, 1 << 30),
+        "hwDecodeProfiles": hwdec::probe(caps.gpu.as_ref().map(|g| g.vendor_id).unwrap_or(0), caps.gpu.as_ref().map(|g| g.device.as_str()).unwrap_or("")).len(),
+        "note": "Cloud VM: CPU-only unless --gpu finds an adapter. RTX 3070 Ti: GPU present (no readback), D3D11VA probe for in-spec H.264/HEVC with CPU fallback; ProRes stays CPU; 6880-wide H.264 never claims Ampere NVDEC (4096 max).",
     })
 }
 
@@ -582,17 +588,49 @@ pub(crate) fn run(args: &super::Args) -> Result<(), Failure> {
     profile_four_layer("c-4layer-1920x1080", b.clone(), still_f.clone(), n_h264.min(8), gpu.as_ref(), &mut runs).map_err(Failure::Error)?;
     profile_four_layer("c-4layer-6880x1032", a.clone(), still_f, n_prores, gpu.as_ref(), &mut runs).map_err(Failure::Error)?;
 
+    let mut caps = PlaybackCaps::probe_host();
+    if let Some(g) = &gpu {
+        let a = g.adapter_caps();
+        caps.with_gpu(effectcraft_engine::playback_caps::GpuCaps {
+            vendor: if a.nvidia { "NVIDIA".into() } else { String::new() },
+            device: a.name.clone(),
+            backend: a.backend.clone(),
+            vram_bytes: None,
+            vendor_id: a.vendor_id,
+            nvenc: a.nvidia,
+            f16_storage: a.f16_storage,
+        });
+        let profiles = hwdec::probe(a.vendor_id, &a.name);
+        caps.with_decode(
+            profiles
+                .into_iter()
+                .map(|p| effectcraft_engine::playback_caps::DecodeCaps {
+                    api: p.api,
+                    codec: p.codec,
+                    chroma: p.chroma,
+                    bit_depth: p.bit_depth,
+                    min_w: p.min_w,
+                    min_h: p.min_h,
+                    max_w: p.max_w,
+                    max_h: p.max_h,
+                })
+                .collect(),
+        );
+    }
+    caps.install_rayon();
+    hwdec::register();
+
     let report = json!({
         "targetFps": 25.0,
-        "host": host_json(gpu_name.as_deref(), want_gpu),
+        "host": host_json(gpu_name.as_deref(), want_gpu, &caps),
         "pipeline": {
-            "decode": "FilmCraft pure-Rust software (no NVDEC/D3D11VA). ProRes: slice-parallel rayon (threads feature on). H.264: own rayon pool, up to min(cores,16). Whole file is slurped with fs::read before open_bytes.",
-            "color": "CPU YUV→premultiplied f32 RGBA (BT.601/709/2020, limited/full), row-parallel.",
-            "prefetch": "MediaPool sequential read-ahead, default 8 frames, disabled in this profile.",
-            "cache": "MediaPool LRU 1 GiB decoded f32 frames; RAM preview up to ~3 GiB Color32; disk cache LZ4.",
-            "composite": "CPU parallel 2D bake + static plate (v0.5.1). GPU compositor exists but desktop gpu_display is off: GPU frames are read back to CPU ColorImage.",
-            "upload": "Desktop: to_color_image (f32→u8) then egui load_texture / tex.set every frame. No vsync PresentMode override (eframe AutoVsync).",
-            "audioSync": "Audio clock masters when cached; if a frame is missing, audio stops and every frame shows as it renders (no framedrop).",
+            "decode": "Streamed FileReader (no whole-file fs::read). D3D11VA/Vulkan Video probed; factory returns None so FilmCraft CPU runs. ProRes never HW. Ampere H.264 max 4096 so 6880-wide H.264 stays CPU.",
+            "color": "CPU YUV→premultiplied f32 RGBA (BT.601/709/2020, limited/full), row-parallel. Viewer presents RGBA8 (no readback when gpu_display).",
+            "prefetch": "Sized from bytes/frame and RAM (2–32); this profile still disables read-ahead so decode timings are honest.",
+            "cache": "MediaPool LRU 1 GiB decoded f32 frames; RAM preview up to ~3 GiB; JPEG half-res proxy cache (20 GiB default).",
+            "composite": "GPU texture present (no readback) when an adapter exists; CPU SIMD fallback. Preview precision RGBA8 display / f16 when the adapter stores it; renders stay f32.",
+            "pool": "One rayon work-stealing pool, max(1, cores−2).",
+            "audioSync": "Audio-master clock; Drop frames to keep sound in sync (default ON). Adaptive Auto res Full→Half→Quarter while playing.",
         },
         "clips": clips,
         "runs": runs,

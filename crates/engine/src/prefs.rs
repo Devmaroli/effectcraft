@@ -109,6 +109,12 @@ page!(Previews {
     show_gpu_info: bool = false,
     /// The monitor's colour space for View ▸ Use Display Color Management: `srgb` or `p3`.
     display_profile: String = "srgb".into(),
+    /// Auto resolution while playing: Full → Half → Quarter when behind the clock.
+    adaptive_playback: bool = true,
+    /// Drop late video frames so audio stays the master clock (ITU-R BT.1359).
+    drop_frames: bool = true,
+    /// View ▸ Performance readout overlay.
+    show_performance: bool = false,
 });
 
 page!(Appearance {
@@ -182,6 +188,9 @@ page!(Disk {
     disk_cache_folder: String = String::new(),
     media_cache_folder: String = String::new(),
     conformed_media_folder: String = String::new(),
+    /// Automatic JPEG half-res proxies (ProRes HQ / oversize files).
+    proxy_cache_folder: String = String::new(),
+    proxy_cache_max_gb: u32 = 20,
 });
 
 page!(Memory {
@@ -961,6 +970,9 @@ pub fn pages() -> Vec<Page> {
             title: "Previews",
             items: vec![
                 s("previews.adaptiveResolutionLimit", "Adaptive Resolution Limit", Kind::Choice(ON_OFF_RES), true),
+                s("previews.adaptivePlayback", "Adaptive Resolution While Playing", B, true),
+                s("previews.dropFrames", "Drop Frames to Keep Sound in Sync", B, true),
+                s("previews.showPerformance", "Show Performance Readout", B, true),
                 s("previews.showInternalWireframes", "Show Internal Wireframes", B, true),
                 s("previews.cacheFramesWhenIdle", "Cache Frames When Idle", B, true),
                 s("previews.fastPreviews", "Fast Previews (Draft 3D, Faster Effects)", B, true),
@@ -1080,6 +1092,8 @@ pub fn pages() -> Vec<Page> {
                 Section("Media Cache"),
                 s("disk.mediaCacheFolder", "Database and Cache Folder", Kind::Path, true),
                 s("disk.conformedMediaFolder", "Conformed Audio Folder", Kind::Path, true),
+                s("disk.proxyCacheFolder", "Proxy Cache Folder", Kind::Path, true),
+                s("disk.proxyCacheMaxGb", "Maximum Proxy Cache Size", Kind::Int(1, 100_000, "GB"), true),
             ],
         },
         Page {

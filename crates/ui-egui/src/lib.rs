@@ -143,6 +143,12 @@ pub struct Playback {
     pub audio_held: bool,
     /// When the last frames were shown (seconds, the last second's worth): the achieved rate.
     pub shown_at: std::collections::VecDeque<f64>,
+    /// Late video frames skipped so audio stays the master clock.
+    pub dropped: u64,
+    /// Adaptive playback divisor (1 = chosen res, 2 = Half, 4 = Quarter). Reset when stopped.
+    pub adaptive_div: u32,
+    /// Consecutive uncached clock ticks; two behind steps Full → Half → Quarter.
+    pub miss_streak: u32,
 }
 
 impl Playback {
@@ -252,10 +258,26 @@ pub struct EffectcraftApp {
     pub(crate) template_thumbs: std::collections::HashMap<String, Option<egui::TextureHandle>>,
     /// Home ▸ Templates: the gallery, and the user template files it was listed from.
     pub(crate) template_list: Option<(Vec<String>, Vec<effectcraft_engine::templates::TemplateInfo>)>,
+    /// Background JPEG half-res proxies (native). `None` on wasm.
+    pub proxy_cache: Option<effectcraft_media::ProxyCache>,
 }
 
 impl EffectcraftApp {
     pub fn new(session: Session) -> Self {
+        session.playback_caps.install_rayon();
+        #[cfg(not(target_arch = "wasm32"))]
+        effectcraft_media::hwdec::register();
+        let proxy_cache = {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let folder = session.proxy_cache_folder().unwrap_or_else(|| std::env::temp_dir().join("EffectCraft").join("Proxy Cache"));
+                Some(effectcraft_media::ProxyCache::new(folder, session.proxy_cache_max_bytes()))
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                None
+            }
+        };
         EffectcraftApp {
             session,
             ui: UiState::default(),
@@ -309,6 +331,7 @@ impl EffectcraftApp {
             window_title: String::new(),
             template_thumbs: Default::default(),
             template_list: None,
+            proxy_cache,
         }
         .with_ui_commands()
     }
@@ -456,13 +479,11 @@ impl EffectcraftApp {
         }
     }
 
-    /// Keep GPU-composited viewer frames on the GPU (drawn from their texture). The browser can't
-    /// read frames back (its thread can't wait for the GPU), so there the viewer shows GPU frames
-    /// directly whenever it draws them plainly (RGB, no exposure, no region of interest); the
-    /// desktop reads them back (see [`frames::RenderSource::gpu_display`]).
+    /// Keep GPU-composited viewer frames on the GPU (drawn from their texture, no CPU readback)
+    /// whenever the viewer shows them plainly (RGB, no exposure, no region of interest).
     fn gpu_display(&self) -> bool {
         let v = &self.session.state.viewer;
-        cfg!(target_arch = "wasm32")
+        self.gpu.is_some()
             && v.channel == effectcraft_engine::viewer::Channel::Rgb
             && v.exposure == 0.0
             && self.session.state.region_of_interest.is_none()
@@ -496,6 +517,7 @@ impl EffectcraftApp {
         self.session.accel = None;
         self.session.layer_cache.clear();
         self.gpu = None;
+        self.session.playback_caps.clear_gpu();
         if let Some(rs) = &self.wgpu {
             let mut renderer = rs.renderer.write();
             if let Some((id, _, _)) = &self.viewer_native {
@@ -546,6 +568,7 @@ impl EffectcraftApp {
                     }
                 }
                 log::info!("GPU compositor: {}", effectcraft_engine::render::Accelerator::name(&g));
+                self.apply_gpu_caps(&g);
                 self.session.accel = Some(Arc::new(g.clone()));
                 self.gpu = Some(g);
                 self.wgpu = Some(rs.clone());
@@ -556,6 +579,35 @@ impl EffectcraftApp {
                 log::warn!("GPU compositor setup failed; using CPU compositing: {reason}");
             }
         }
+    }
+
+    fn apply_gpu_caps(&mut self, g: &effectcraft_gpu::Gpu) {
+        let a = g.adapter_caps();
+        self.session.playback_caps.with_gpu(effectcraft_engine::playback_caps::GpuCaps {
+            vendor: if a.nvidia { "NVIDIA".into() } else { String::new() },
+            device: a.name.clone(),
+            backend: a.backend.clone(),
+            vram_bytes: None,
+            vendor_id: a.vendor_id,
+            nvenc: a.nvidia,
+            f16_storage: a.f16_storage,
+        });
+        let profiles = effectcraft_media::hwdec::probe(a.vendor_id, &a.name);
+        self.session.playback_caps.with_decode(
+            profiles
+                .into_iter()
+                .map(|p| effectcraft_engine::playback_caps::DecodeCaps {
+                    api: p.api,
+                    codec: p.codec,
+                    chroma: p.chroma,
+                    bit_depth: p.bit_depth,
+                    min_w: p.min_w,
+                    min_h: p.min_h,
+                    max_w: p.max_w,
+                    max_h: p.max_h,
+                })
+                .collect(),
+        );
     }
 
     /// The viewer shows a frame composited on the GPU (drawn from its wgpu texture).
@@ -628,6 +680,13 @@ impl EffectcraftApp {
         let (_, k) = self.session.state.viewer.fast_previews.render(self.ui.viewer.interacting || self.ui.viewer.property_interacting);
         if k < 1.0 && self.ui.viewer.res == state::Resolution::Auto {
             return full.min((full * 0.5).max(self.session.prefs.adaptive_limit()));
+        }
+        // Auto-while-playing: Full → Half → Quarter when behind the clock (restored on stop).
+        if self.playback.playing && self.session.prefs.previews.adaptive_playback {
+            let div = self.playback.adaptive_div.max(1) as f64;
+            if div > 1.0 {
+                return full.min((1.0 / div).max(self.session.prefs.adaptive_limit()));
+            }
         }
         full
     }
@@ -711,7 +770,11 @@ impl EffectcraftApp {
             backend: effectcraft_engine::render::Backend::Auto,
             nested_switches: self.session.prefs.general.switches_affect_nested_comps,
             draft_shadows: self.session.prefs.three_d.realtime_shadows,
-            proxy: Default::default(),
+            proxy: if self.session.project.settings.use_proxies {
+                effectcraft_engine::project::render_queue::ProxyUse::CurrentSettings
+            } else {
+                effectcraft_engine::project::render_queue::ProxyUse::UseNone
+            },
             parallel: true,
         }
     }
@@ -768,7 +831,14 @@ impl EffectcraftApp {
             audio_frame: (!plan.video).then_some(plan.first),
             audio_held: false,
             shown_at: Default::default(),
+            dropped: 0,
+            adaptive_div: 1,
+            miss_streak: 0,
         };
+        if let Some(c) = self.session.active_comp() {
+            let bpf = (c.width as usize).saturating_mul(c.height as usize).saturating_mul(16);
+            self.session.footage.size_prefetch(bpf, self.session.playback_caps.ram_available);
+        }
         if !self.playback.caching {
             if plan.video {
                 self.playback.audio_held = self.audio_plays();
@@ -831,6 +901,8 @@ impl EffectcraftApp {
         let was = std::mem::replace(&mut self.playback.playing, false);
         self.audio = None;
         self.playback.caching = false;
+        self.playback.adaptive_div = 1;
+        self.playback.miss_streak = 0;
         if !was {
             return;
         }
@@ -889,6 +961,122 @@ impl EffectcraftApp {
         let t = self.session.active_comp().map(|c| c.frame_rate.tick_of(pl.first)).unwrap_or_default();
         self.start_audio(t);
         true
+    }
+
+    fn on_playback_hit(&mut self) {
+        self.playback.waiting = false;
+        self.playback.miss_streak = 0;
+    }
+
+    fn on_playback_miss(&mut self, skipped: u64) {
+        self.playback.waiting = true;
+        self.playback.dropped = self.playback.dropped.saturating_add(skipped.max(1));
+        self.playback.miss_streak = self.playback.miss_streak.saturating_add(1);
+        if self.session.prefs.previews.adaptive_playback && self.playback.miss_streak >= 2 {
+            let cur = self.playback.adaptive_div.max(1);
+            let next = cur.saturating_mul(2).min(4);
+            if next != cur {
+                self.playback.adaptive_div = next;
+                self.playback.miss_streak = 0;
+            }
+        }
+    }
+
+    /// Label of the resolution the viewer is actually rendering (badge).
+    pub fn playback_res_label(&self, scale: f64) -> String {
+        let name = if scale >= 0.99 {
+            "Full"
+        } else if scale >= 0.49 {
+            "Half"
+        } else if scale >= 0.32 {
+            "Third"
+        } else {
+            "Quarter"
+        };
+        if self.playback.playing && self.playback.adaptive_div.max(1) > 1 && self.session.prefs.previews.adaptive_playback {
+            format!("{name} · auto")
+        } else {
+            name.into()
+        }
+    }
+
+    /// One-line Performance readout (decode, composite, fps, drops, cache, proxy).
+    pub fn performance_text(&self) -> String {
+        use effectcraft_engine::playback_caps::{CompositePath, DecodePath};
+        let caps = &self.session.playback_caps;
+        let decode = if let Some(f) = self.session.project.items.values().find_map(|it| match &it.kind {
+            effectcraft_engine::project::ItemKind::Footage(f) if f.has_video => Some(f),
+            _ => None,
+        }) {
+            match caps.pick_decode(&f.codec, "", 8, f.width, f.height) {
+                DecodePath::Hw { api, .. } => format!("{api} available · CPU decode"),
+                DecodePath::Cpu { threads } => {
+                    if let Some(d) = caps.video_decode.first() {
+                        format!("{} available · CPU decode", d.api)
+                    } else {
+                        format!("CPU decode ({threads} th)")
+                    }
+                }
+            }
+        } else if let Some(d) = caps.video_decode.first() {
+            format!("{} available · CPU decode", d.api)
+        } else {
+            "CPU decode".into()
+        };
+        let composite = match caps.composite {
+            CompositePath::GpuTexture => "GPU composite",
+            CompositePath::GpuReadback => "GPU readback",
+            CompositePath::CpuSimd => "CPU composite",
+        };
+        let fps = self.playback.achieved_fps().map(|f| format!("{f:.1} fps")).unwrap_or_else(|| format!("{:.0} UI", self.fps));
+        let (used, budget) = self.frames.ram_fill();
+        let fill = if budget > 0 { (used as f64 / budget as f64 * 100.0).round() as u32 } else { 0 };
+        let proxies = self.session.project.items.values().filter(|it| it.proxy.as_ref().is_some_and(|p| p.enabled)).count();
+        let proxy = if self.session.project.settings.use_proxies { format!("proxies on ({proxies})") } else { "proxies off".into() };
+        format!("{decode}  ·  {composite}  ·  {fps}  ·  dropped {}  ·  cache {fill}%  ·  {proxy}", self.playback.dropped)
+    }
+
+    fn pump_proxies(&mut self) {
+        let Some(cache) = self.proxy_cache.clone() else { return };
+        if let Some(folder) = self.session.proxy_cache_folder() {
+            cache.set_folder(folder);
+        }
+        cache.set_max_bytes(self.session.proxy_cache_max_bytes());
+        for j in cache.jobs() {
+            if j.status == effectcraft_media::ProxyStatus::Ready
+                && !j.attached
+                && let Some(p) = &j.proxy_path
+            {
+                let path = p.to_string_lossy().into_owned();
+                let already = self.session.project.item(ItemId(j.item)).and_then(|it| it.proxy.as_ref()).is_some_and(|px| px.footage.path == path);
+                if !already {
+                    let _ = self.session.execute("file.setProxy", json!({"item": j.item, "path": path}));
+                }
+                cache.mark_attached(&j.path);
+            }
+        }
+        if !self.session.project.settings.use_proxies || cache.running_count() >= 2 {
+            return;
+        }
+        let footage: Vec<(ItemId, effectcraft_engine::project::Footage)> = self
+            .session
+            .project
+            .items
+            .iter()
+            .filter_map(|(id, it)| match &it.kind {
+                effectcraft_engine::project::ItemKind::Footage(f) if it.proxy.is_none() && effectcraft_media::ProxyCache::should_auto(f) => {
+                    Some((*id, f.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        for (id, f) in footage {
+            if cache.job(&f.path).is_some() {
+                continue;
+            }
+            cache.start(self.session.footage.clone(), &f, id);
+            break;
+        }
     }
 
     /// The viewer shows grids, guides and safe margins (hidden while a preview without
@@ -1044,10 +1232,17 @@ impl EffectcraftApp {
             if !video {
                 self.playback.audio_frame = Some(target);
             } else if self.frames.is_cached(&FrameKey { frame: target, ..series }) {
-                self.playback.waiting = false;
+                self.on_playback_hit();
                 if target != cur {
                     self.session.set_time(fr.tick_of(target));
                     self.playback.frame_shown(now);
+                }
+            } else if self.session.prefs.previews.drop_frames {
+                // Audio stays the master clock (ITU-R BT.1359 / mpv framedrop=vo).
+                let skipped = (target - cur).unsigned_abs();
+                self.on_playback_miss(skipped);
+                if target != cur {
+                    self.session.set_time(fr.tick_of(target));
                 }
             } else {
                 // Rendering can't keep up: rather than skip frames, the sound stops and every
@@ -1092,10 +1287,18 @@ impl EffectcraftApp {
             return;
         }
         if self.frames.is_cached(&FrameKey { frame: target, ..series }) {
-            self.playback.waiting = false;
+            self.on_playback_hit();
             if target != cur {
                 self.session.set_time(fr.tick_of(target));
                 self.playback.frame_shown(now);
+            }
+        } else if self.session.prefs.previews.drop_frames {
+            let skipped = (target - cur).unsigned_abs();
+            self.on_playback_miss(skipped);
+            if target != cur {
+                self.session.set_time(fr.tick_of(target));
+                self.playback.start_wall = now;
+                self.playback.start_frame = target;
             }
         } else {
             // Not cached yet: hold the clock at the current frame (cache first, then play).
@@ -1379,6 +1582,7 @@ impl EffectcraftApp {
         }
         self.apply_prefs(&ctx);
         self.handle_events(&ctx);
+        self.pump_proxies();
         panels::unsaved::on_close_requested(self, &ctx);
         let title = panels::unsaved::window_title(self);
         if title != self.window_title {
@@ -1618,5 +1822,36 @@ mod gpu_failure_tests {
         assert!(app.session.project.comp(comp).unwrap().layers.is_empty());
         app.session.execute("edit.redo", json!({})).unwrap();
         assert_eq!(app.session.render(comp, Tick::ZERO, RenderOpts::default()).data, before.data);
+    }
+}
+
+#[cfg(test)]
+mod playback_plan_tests {
+    use super::*;
+
+    #[test]
+    fn miss_steps_adaptive_and_stop_restores() {
+        let mut app = EffectcraftApp::new(Session::default());
+        app.session.prefs.previews.adaptive_playback = true;
+        app.session.prefs.previews.drop_frames = true;
+        app.on_playback_miss(2);
+        assert_eq!(app.playback.dropped, 2);
+        assert_eq!(app.playback.adaptive_div.max(1), 1);
+        app.on_playback_miss(1);
+        assert_eq!(app.playback.adaptive_div, 2);
+        app.on_playback_miss(1);
+        app.on_playback_miss(1);
+        assert_eq!(app.playback.adaptive_div, 4);
+        app.stop();
+        assert_eq!(app.playback.adaptive_div, 1);
+        assert_eq!(app.playback.miss_streak, 0);
+    }
+
+    #[test]
+    fn gpu_display_off_without_adapter() {
+        let app = EffectcraftApp::new(Session::default());
+        assert!(!app.gpu_display());
+        assert!(app.session.prefs.previews.drop_frames);
+        assert!(app.session.prefs.previews.adaptive_playback);
     }
 }

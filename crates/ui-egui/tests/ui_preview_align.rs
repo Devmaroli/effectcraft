@@ -216,6 +216,36 @@ fn auto_resolution_is_the_same_playing_and_paused() {
 }
 
 #[test]
+fn adaptive_resolution_drops_while_playing_when_behind() {
+    let mut h = harness();
+    h.state_mut().ui.viewer.res = effectcraft_ui_egui::state::Resolution::Full;
+    let paused = h.state().viewer_scale(1.0, 1.0);
+    assert!((paused - 1.0).abs() < 1e-9, "{paused}");
+    h.state_mut().playback.playing = true;
+    h.state_mut().playback.adaptive_div = 4;
+    h.state_mut().session.prefs.previews.adaptive_playback = true;
+    let playing = h.state().viewer_scale(1.0, 1.0);
+    assert!((playing - 0.25).abs() < 1e-9, "{playing}");
+    h.state_mut().stop();
+    assert_eq!(h.state().playback.adaptive_div, 1);
+    assert!((h.state().viewer_scale(1.0, 1.0) - 1.0).abs() < 1e-9);
+}
+
+#[test]
+fn drop_frames_default_on_and_resolution_badge_id() {
+    let mut h = harness();
+    assert!(h.state().session.prefs.previews.drop_frames);
+    assert!(h.state().session.prefs.previews.adaptive_playback);
+    assert!(h.state().session.project.settings.use_proxies);
+    h.run_steps(2);
+    assert!(h.state().auto.find("viewer.playbackRes").is_some(), "resolution badge on the viewer");
+    invoke(&mut h, "view.performance", json!({}));
+    h.run_steps(2);
+    assert!(h.state().session.prefs.previews.show_performance);
+    assert!(h.state().auto.find("viewer.performance").is_some(), "performance readout overlay");
+}
+
+#[test]
 fn viewer_shows_preview_fps_and_gpu_toggle() {
     let mut h = harness();
     assert!(h.state().auto.find("viewer.gpu").is_some(), "GPU on/off control on the viewer bar");

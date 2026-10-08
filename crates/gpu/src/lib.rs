@@ -96,6 +96,16 @@ pub use wgpu;
 
 use crate::context::Enc;
 
+/// wgpu adapter snapshot for the playback capability probe.
+#[derive(Clone, Debug)]
+pub struct AdapterCaps {
+    pub name: String,
+    pub backend: String,
+    pub vendor_id: u32,
+    pub f16_storage: bool,
+    pub nvidia: bool,
+}
+
 /// The GPU compositor (cheap to clone; one device shared by all clones).
 #[derive(Clone)]
 pub struct Gpu {
@@ -169,6 +179,18 @@ impl Gpu {
 
     pub fn context(&self) -> &GpuContext {
         &self.ctx
+    }
+
+    /// Adapter snapshot for the playback capability probe (never panics).
+    pub fn adapter_caps(&self) -> AdapterCaps {
+        let c = &self.ctx;
+        AdapterCaps {
+            name: c.adapter_name.clone(),
+            backend: c.backend.clone(),
+            vendor_id: c.vendor_id,
+            f16_storage: c.f16_storage,
+            nvidia: c.vendor_id == 0x10DE || c.adapter_name.to_ascii_lowercase().contains("nvidia"),
+        }
     }
 
     pub fn device(&self) -> &wgpu::Device {

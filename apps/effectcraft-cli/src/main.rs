@@ -42,7 +42,7 @@ use std::io::Write;
 
 use effectcraft_automation::tools::{self, Reply};
 use effectcraft_automation::{Backend, McpServer};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 mod playback_profile;
 
@@ -895,18 +895,14 @@ fn bench_ops(args: &Args) -> Result<(), Failure> {
 
 // ---------------------------------------------------------------- benchmark helpers
 
-use effectcraft_engine::project::ItemId;
 use effectcraft_engine::Session;
+use effectcraft_engine::project::ItemId;
 use effectcraft_render::{LayerCache, LayerTiming, RenderOpts, Renderer};
 use effectcraft_time::Tick;
 
 fn median(v: &mut [f64]) -> f64 {
     v.sort_by(f64::total_cmp);
-    if v.is_empty() {
-        0.0
-    } else {
-        v[v.len() / 2]
-    }
+    if v.is_empty() { 0.0 } else { v[v.len() / 2] }
 }
 
 fn min(v: &[f64]) -> f64 {

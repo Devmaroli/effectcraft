@@ -273,3 +273,13 @@ fn guess_alpha_invert_and_linear_light() {
     s.execute("file.applyInterpretation", json!({"items": [w.0]})).unwrap();
     assert!(foot(&s, w).linear_light);
 }
+
+#[test]
+fn project_use_proxies_defaults_on_and_toggles() {
+    let mut s = session();
+    assert!(s.project.settings.use_proxies);
+    s.execute("file.projectSettings", json!({"useProxies": false})).unwrap();
+    assert!(!s.project.settings.use_proxies);
+    s.execute("file.projectSettings", json!({"useProxies": true})).unwrap();
+    assert!(s.project.settings.use_proxies);
+}

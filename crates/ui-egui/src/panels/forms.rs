@@ -501,6 +501,7 @@ pub fn open_form(app: &mut EffectcraftApp, id: &str, p: &Value) -> bool {
                         &[(gpu_label.as_str(), json!("gpu")), ("Mercury Software Only", json!("software"))],
                         usize::from(!st.gpu_acceleration),
                     ),
+                    Field::bool("useProxies", "Use proxies", st.use_proxies),
                 ],
             )
         }
