@@ -39,6 +39,16 @@ fn auto_btn(app: &mut EffectcraftApp, ui: &mut egui::Ui, id: &str, label: &str) 
     r.clicked()
 }
 
+/// Cover a visible vertical scrollbar so the agent audit can address it.
+fn register_vscroll(app: &mut EffectcraftApp, ui: &egui::Ui, id: &str, inner: Rect, content_h: f32) {
+    if content_h <= inner.height() + 1.0 {
+        return;
+    }
+    let w = ui.spacing().scroll.bar_width.max(10.0) + 4.0;
+    let bar = Rect::from_min_size(egui::pos2(inner.max.x - w, inner.min.y), Vec2::new(w * 2.0, inner.height().max(2.0)));
+    app.auto.add(id, bar, "scroll");
+}
+
 fn fill_for(level: AlertLevel) -> Color32 {
     match level {
         AlertLevel::Error => Color32::from_rgb(0x2b, 0x15, 0x13),
@@ -323,7 +333,7 @@ fn sorter_tab(app: &mut EffectcraftApp, ui: &mut egui::Ui, alerts: &[PanelAlert]
         if auto_btn(app, ui, "screenSuite.sort", "Sort sizes") {
             exec(app, "screen.sorter.sort", sort_body(app));
         }
-        if ui.button("Clear").clicked() {
+        if auto_btn(app, ui, "screenSuite.clear", "Clear") {
             app.session.state.screen.paste.clear();
             app.session.state.screen.sorter = Default::default();
         }
@@ -1172,7 +1182,7 @@ fn paint_library_table(app: &mut EffectcraftApp, ui: &mut egui::Ui, merged: &[Va
             true
         })
         .collect();
-    egui::ScrollArea::vertical().id_salt("screenLibrary.table").auto_shrink([false, false]).show(ui, |ui| {
+    let table = egui::ScrollArea::vertical().id_salt("screenLibrary.table").auto_shrink([false, false]).show(ui, |ui| {
         for (vis, (i, row)) in visible.into_iter().enumerate() {
             let name = row.get("name").and_then(Value::as_str).unwrap_or("");
             let issue = issues.iter().find(|iss| iss.get("row").and_then(Value::as_str) == Some(name));
@@ -1226,9 +1236,9 @@ fn paint_library_table(app: &mut EffectcraftApp, ui: &mut egui::Ui, merged: &[Va
                     pill(ui, short, Color32::from_rgb(0x3a, 0x27, 0x12), Color32::from_rgb(0xfd, 0xba, 0x74));
                     if let Some(fix) = iss.get("fix").and_then(Value::as_str).filter(|s| !s.is_empty()) {
                         let label = iss.get("fixLabel").and_then(Value::as_str).unwrap_or("Fix");
-                        if ui.button(label).clicked() {
-                            let id = iss.get("id").and_then(Value::as_str).unwrap_or("");
-                            exec(app, "screen.library.edit", json!({"fix": id, "value": fix}));
+                        let fid = iss.get("id").and_then(Value::as_str).unwrap_or("");
+                        if auto_btn(app, ui, &format!("screenLibrary.fix.{fid}"), label) {
+                            exec(app, "screen.library.edit", json!({"fix": fid, "value": fix}));
                         }
                     }
                 } else {
@@ -1238,6 +1248,7 @@ fn paint_library_table(app: &mut EffectcraftApp, ui: &mut egui::Ui, merged: &[Va
             app.auto.add(&format!("screenLibrary.row.{i}"), rect, name);
         }
     });
+    register_vscroll(app, ui, "screenLibrary.table.scroll", table.inner_rect, table.content_size.y);
 }
 
 fn combiners_editor(app: &mut EffectcraftApp, ui: &mut egui::Ui, lib: &Value) {
@@ -1276,9 +1287,9 @@ fn combiners_editor(app: &mut EffectcraftApp, ui: &mut egui::Ui, lib: &Value) {
                     ui.colored_label(Color32::from_rgb(0xff, 0x9b, 0x94), msg);
                     if let Some(fix) = iss.get("fix").and_then(Value::as_str).filter(|s| !s.is_empty()) {
                         let label = iss.get("fixLabel").and_then(Value::as_str).unwrap_or("Fix");
-                        if ui.button(label).clicked() {
-                            let id = iss.get("id").and_then(Value::as_str).unwrap_or("");
-                            exec(app, "screen.library.edit", json!({"fix": id, "value": fix}));
+                        let fid = iss.get("id").and_then(Value::as_str).unwrap_or("");
+                        if auto_btn(app, ui, &format!("screenLibrary.fix.{fid}"), label) {
+                            exec(app, "screen.library.edit", json!({"fix": fid, "value": fix}));
                         }
                     }
                 });
