@@ -182,9 +182,11 @@ See [docs/agents.md](docs/agents.md) and [docs/control-protocol.md](docs/control
 ## Get started
 
 Installers for each version are on the [Releases](https://github.com/storytold/effectcraft/releases)
-page: a universal macOS app; Windows MSIs and portable zips for x64, x86 and ARM64; and Linux
-AppImage, deb, rpm and tar.gz for x86_64 and aarch64. The Windows ARM64 build runs natively on
-Windows on ARM, without x64 emulation. CI installs that MSI on Windows 11 ARM64 hardware, checks
+page: a universal macOS app; Windows MSIs and portable zips for x64, x86 and ARM64; a per-user
+Windows x64 office installer (`effectcraft-Setup-x64.exe`, no administrator rights, Start menu and
+desktop shortcuts) plus `effectcraft-Portable-x64.zip` (settings next to the exe via `portable.txt`);
+and Linux AppImage, deb, rpm and tar.gz for x86_64 and aarch64. The Windows ARM64 build runs natively
+on Windows on ARM, without x64 emulation. CI installs that MSI on Windows 11 ARM64 hardware, checks
 both programs are ARM64 and runs the command-line tool there, but it doesn't open the app's window
 or run the test suite natively on ARM64 yet, so please report anything that behaves differently.
 

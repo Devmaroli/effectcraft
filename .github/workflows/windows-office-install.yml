@@ -1,0 +1,111 @@
+# Per-user Windows x64 installer + portable zip for office installs.
+# A version tag (v0.5.0) builds both and attaches them to the GitHub Release.
+#
+#   git tag v0.5.0 && git push origin v0.5.0
+#
+# Artifacts:
+#   effectcraft-Setup-x64.exe     Inno Setup, %LOCALAPPDATA%\Programs\Craft\effectcraft, no admin
+#   effectcraft-Portable-x64.zip  runs from any folder; portable.txt keeps settings next to the exe
+#   SHA256SUMS.txt
+name: Windows office install
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-office-install-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  EFFECTCRAFT_BUILD_SHA: ${{ github.sha }}
+
+jobs:
+  windows-x64:
+    name: Setup.exe + Portable zip
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-office-x64
+
+      - name: Version from tag
+        shell: bash
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then
+            v="${GITHUB_REF_NAME#v}"
+            if ! printf '%s' "$v" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'; then
+              echo "::error::tag '$GITHUB_REF_NAME' is not a version like v1.2.3"
+              exit 1
+            fi
+            cargo xtask version set "$v"
+            echo "EFFECTCRAFT_VERSION=$v" >>"$GITHUB_ENV"
+          else
+            . packaging/env.sh
+            echo "EFFECTCRAFT_VERSION=$VERSION" >>"$GITHUB_ENV"
+          fi
+          echo "EFFECTCRAFT_BUILD_DATE=$(date -u +%Y-%m-%d)" >>"$GITHUB_ENV"
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress --yes
+
+      - name: Build installer and portable zip
+        shell: pwsh
+        env:
+          DIST: ${{ github.workspace }}\dist\office
+        run: ./packaging/windows/package-office.ps1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: effectcraft-windows-office-x64
+          path: |
+            dist/office/effectcraft-Setup-x64.exe
+            dist/office/effectcraft-Portable-x64.zip
+            dist/office/SHA256SUMS.txt
+          if-no-files-found: error
+
+      - name: Attach to GitHub Release
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ env.EFFECTCRAFT_VERSION }}
+        working-directory: dist/office
+        run: |
+          tag="v$VERSION"
+          title="EffectCraft v$VERSION"
+          pre=false
+          case "$VERSION" in *-*) pre=true ;; esac
+          {
+            printf '%s\n' "Windows office install (x64): per-user Setup.exe (no administrator rights) and a portable zip."
+            printf '\n'
+            printf 'Installer path: %%LOCALAPPDATA%%\\Programs\\Craft\\effectcraft\n'
+            printf 'Portable: extract anywhere; portable.txt keeps settings next to the exe.\n'
+            printf '\n```\n'
+            cat SHA256SUMS.txt
+            printf '```\n'
+          } >"$RUNNER_TEMP/office-notes.md"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" --clobber -- effectcraft-Setup-x64.exe effectcraft-Portable-x64.zip SHA256SUMS.txt
+            gh release edit "$tag" --title "$title" --notes-file "$RUNNER_TEMP/office-notes.md" --prerelease="$pre"
+          else
+            gh release create "$tag" --title "$title" --notes-file "$RUNNER_TEMP/office-notes.md" --target "$GITHUB_SHA" --prerelease="$pre" -- \
+              effectcraft-Setup-x64.exe effectcraft-Portable-x64.zip SHA256SUMS.txt
+          fi
+          cat SHA256SUMS.txt >>"$GITHUB_STEP_SUMMARY"

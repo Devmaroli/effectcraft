@@ -95,14 +95,42 @@ pub fn session() -> Session {
     }
 }
 
-/// The platform config directory for EffectCraft (`EFFECTCRAFT_CONFIG_DIR` overrides):
-/// `~/Library/Application Support/EffectCraft` (macOS), `%APPDATA%\EffectCraft` (Windows),
-/// `$XDG_CONFIG_HOME/effectcraft` or `~/.config/effectcraft` (Linux and others).
+/// The platform config directory for EffectCraft.
+///
+/// Resolution order:
+/// 1. `EFFECTCRAFT_CONFIG_DIR` if set (always wins).
+/// 2. The folder next to the running executable, when that folder contains a `portable.txt`
+///    marker (office portable zip: settings travel with the copy).
+/// 3. Platform default: `~/Library/Application Support/EffectCraft` (macOS),
+///    `%APPDATA%\EffectCraft` (Windows), `$XDG_CONFIG_HOME/effectcraft` or
+///    `~/.config/effectcraft` (Linux and others).
 pub fn config_dir() -> Option<std::path::PathBuf> {
+    resolve_config_dir(std::env::var_os("EFFECTCRAFT_CONFIG_DIR"), std::env::current_exe().ok().as_deref())
+}
+
+/// When `portable.txt` is a file next to `exe`, settings live in that folder so a zip copy is
+/// self-contained. A directory named `portable.txt` does not count (must be a file). Missing or
+/// unreadable executables yield `None`.
+pub fn portable_config_dir_from_exe(exe: &std::path::Path) -> Option<std::path::PathBuf> {
+    let dir = exe.parent().filter(|p| !p.as_os_str().is_empty())?;
+    dir.join("portable.txt").is_file().then(|| dir.to_path_buf())
+}
+
+fn resolve_config_dir(override_dir: Option<std::ffi::OsString>, exe: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
     use std::path::PathBuf;
-    if let Some(d) = std::env::var_os("EFFECTCRAFT_CONFIG_DIR") {
+    if let Some(d) = override_dir {
         return Some(PathBuf::from(d));
     }
+    if let Some(exe) = exe
+        && let Some(d) = portable_config_dir_from_exe(exe)
+    {
+        return Some(d);
+    }
+    platform_config_dir()
+}
+
+fn platform_config_dir() -> Option<std::path::PathBuf> {
+    use std::path::PathBuf;
     let home = || std::env::var_os("HOME").map(PathBuf::from);
     if cfg!(target_os = "macos") {
         return home().map(|h| h.join("Library/Application Support/EffectCraft"));
@@ -562,5 +590,56 @@ mod tests {
         s.execute("prop.set", json!({"layer": ctl, "path": "effects/#1/convergence", "value": true})).unwrap();
         assert!(close(v3(&s, "transform/position"), [300.0 - d, 180.0, -800.0]), "{:?}", v3(&s, "transform/position"));
         assert!(close(v3(&s, "transform/poi"), [300.0, 180.0, 0.0]), "{:?}", v3(&s, "transform/poi"));
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let n = N.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("effectcraft-portable-{}-{n}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn portable_txt_next_to_exe_uses_that_folder() {
+        let dir = scratch("yes");
+        let exe = dir.join("effectcraft.exe");
+        std::fs::write(&exe, b"").unwrap();
+        assert!(super::portable_config_dir_from_exe(&exe).is_none(), "no marker yet");
+        std::fs::write(dir.join("portable.txt"), "EffectCraft portable mode\n").unwrap();
+        assert_eq!(super::portable_config_dir_from_exe(&exe).as_deref(), Some(dir.as_path()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn portable_txt_directory_is_not_a_marker() {
+        let dir = scratch("dir-marker");
+        let exe = dir.join("effectcraft.exe");
+        std::fs::write(&exe, b"").unwrap();
+        std::fs::create_dir(dir.join("portable.txt")).unwrap();
+        assert!(super::portable_config_dir_from_exe(&exe).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn portable_txt_missing_exe_parent_is_none() {
+        assert!(super::portable_config_dir_from_exe(std::path::Path::new("effectcraft.exe")).is_none());
+        assert!(super::portable_config_dir_from_exe(std::path::Path::new("")).is_none());
+    }
+
+    #[test]
+    fn config_dir_env_override_wins_over_portable_marker() {
+        let dir = scratch("override");
+        let exe = dir.join("effectcraft.exe");
+        std::fs::write(&exe, b"").unwrap();
+        std::fs::write(dir.join("portable.txt"), "portable\n").unwrap();
+        let forced = dir.join("forced-config");
+        let got = super::resolve_config_dir(Some(forced.clone().into_os_string()), Some(&exe));
+        assert_eq!(got.as_deref(), Some(forced.as_path()));
+        let portable = super::resolve_config_dir(None, Some(&exe));
+        assert_eq!(portable.as_deref(), Some(dir.as_path()));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

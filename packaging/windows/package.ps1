@@ -5,7 +5,10 @@
 .DESCRIPTION
   Produces, in $env:DIST (default: dist/release):
     effectcraft-<version>-windows-<arch>.msi            per-machine installer (WiX v5)
-    effectcraft-<version>-windows-<arch>-portable.zip   effectcraft.exe + effectcraft-cli.exe
+    effectcraft-<version>-windows-<arch>-portable.zip   effectcraft.exe + effectcraft-cli.exe + portable.txt
+    (x64, when Inno Setup 6 is on PATH)
+    effectcraft-Setup-x64.exe                           per-user office installer (no admin)
+    effectcraft-Portable-x64.zip                        same zip under the office name
 
   The binaries link the C runtime statically (+crt-static), so neither the MSI nor the portable
   zip needs the Visual C++ redistributable. Signing is delegated to sign.ps1 (skipped with a
@@ -106,6 +109,8 @@ $Portable = Join-Path $TargetDir "windows-package\effectcraft-$Version-windows-$
 Remove-Item -Recurse -Force $Portable -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $Portable | Out-Null
 Copy-Item (Join-Path $Stage '*.exe') $Portable
+Copy-Item (Join-Path $PSScriptRoot 'portable.txt') $Portable
+Copy-Item (Join-Path $PSScriptRoot 'README-Windows.txt') $Portable -ErrorAction SilentlyContinue
 foreach ($f in 'README.md', 'LICENSE', 'LICENSE-MIT', 'LICENSE-APACHE') {
   $p = Join-Path $Root $f
   if (Test-Path $p) { Copy-Item $p $Portable }
@@ -113,6 +118,39 @@ foreach ($f in 'README.md', 'LICENSE', 'LICENSE-MIT', 'LICENSE-APACHE') {
 $Zip = Join-Path $Dist "effectcraft-$Version-windows-$Arch-portable.zip"
 Remove-Item -Force $Zip -ErrorAction SilentlyContinue
 Compress-Archive -Path $Portable -DestinationPath $Zip
+if ($Arch -eq 'x64') {
+  $OfficeZip = Join-Path $Dist 'effectcraft-Portable-x64.zip'
+  Copy-Item $Zip $OfficeZip -Force
+}
+
+# Per-user office installer (x64 only): %LOCALAPPDATA%\Programs\Craft\effectcraft, no admin.
+# Skipped when Inno Setup is not installed so WiX-only jobs (ARM64 smoke) keep working.
+if ($Arch -eq 'x64') {
+  $iscc = $env:ISCC
+  if (-not $iscc) {
+    foreach ($c in @(
+      (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
+      (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe'),
+      (Get-Command iscc -ErrorAction SilentlyContinue).Source
+    )) {
+      if ($c -and (Test-Path -LiteralPath $c)) { $iscc = $c; break }
+    }
+  }
+  if ($iscc) {
+    $Setup = Join-Path $Dist 'effectcraft-Setup-x64.exe'
+    $InfoVersion = ($MsiVersion)
+    $Icon = Join-Path $Root 'assets\app-icon\effectcraft.ico'
+    Remove-Item -Force $Setup -ErrorAction SilentlyContinue
+    Invoke-Native 'Inno Setup (ISCC)' {
+      & $iscc /Qp /O"$Dist" /F"effectcraft-Setup-x64" `
+        /DMyAppVersion="$Version" /DMyVersionInfo="$InfoVersion" /DBinDir="$Stage" /DIconPath="$Icon" `
+        (Join-Path $PSScriptRoot 'effectcraft.iss')
+    }
+    & (Join-Path $PSScriptRoot 'sign.ps1') $Setup
+  } else {
+    Write-Output 'skipping effectcraft-Setup-x64.exe: Inno Setup 6 (ISCC.exe) not found'
+  }
+}
 
 # Smoke-test the CLI when this machine can run it. An ARM64 build made on an x64 runner can't run
 # here; .github/workflows/windows-arm64.yml installs and runs it on ARM64 instead.
@@ -122,4 +160,4 @@ if ($Arch -ne 'arm64' -or $HostArch -eq 'arm64') {
 } else {
   Write-Output "skipping effectcraft-cli --version: an $Arch build doesn't run on this $HostArch machine"
 }
-Get-Item $Msi, $Zip | Format-Table Name, Length
+Get-ChildItem $Dist | Format-Table Name, Length
