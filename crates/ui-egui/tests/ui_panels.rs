@@ -351,11 +351,6 @@ fn screen_manager_apply_places_source_through_the_gui() {
     h.run_steps(4);
     let src_el = h.state().auto.find("screenSuite.source").expect("Source: line in Screen Manager");
     assert!(src_el.label.contains("Honor_400_EN"), "{}", src_el.label);
-    let dir = "/cursor/stores/self/arabic-text";
-    std::fs::create_dir_all(dir).unwrap();
-    std::fs::create_dir_all("/opt/cursor/artifacts/arabic-text").unwrap();
-    h.render().expect("render").save(format!("{dir}/screen-manager-source-line.png")).unwrap();
-    std::fs::copy(format!("{dir}/screen-manager-source-line.png"), "/opt/cursor/artifacts/arabic-text/screen-manager-source-line.png").unwrap();
     click(&mut h, "screenSuite.apply");
     h.run_steps(8);
     let src = h.state().session.active_comp_id().or_else(|| h.state().session.state.project_selection.first().copied());
@@ -399,10 +394,6 @@ fn screen_manager_apply_disabled_without_source() {
     click(&mut h, "screenSuite.apply");
     h.run_steps(4);
     assert_eq!(h.state().session.project.items.len(), n, "disabled Apply must not create empty comps");
-    let dir = "/cursor/stores/self/arabic-text";
-    std::fs::create_dir_all(dir).unwrap();
-    h.render().expect("render").save(format!("{dir}/screen-manager-no-source.png")).unwrap();
-    std::fs::copy(format!("{dir}/screen-manager-no-source.png"), "/opt/cursor/artifacts/arabic-text/screen-manager-no-source.png").unwrap();
 }
 
 #[test]
@@ -444,7 +435,4 @@ fn window_menu_fits_1080p_and_screen_suite_is_near_the_top() {
     assert!(suite_i * 5 < n, "Screen Suite index {suite_i} of {n} is not < 20%: {rows:?}");
     assert!(lib_i * 5 < n, "Screen Library index {lib_i} of {n} is not < 20%: {rows:?}");
     assert!(h.state().auto.find("menu.window.renderQueue").is_some(), "Render Queue must still be in the Window menu");
-    let dir = std::env::var("WINDOW_MENU_SNAP").unwrap_or_else(|_| "/opt/cursor/artifacts/screenshots".into());
-    std::fs::create_dir_all(&dir).unwrap();
-    h.render().expect("render").save(format!("{dir}/window-menu-1080p.png")).unwrap();
 }
