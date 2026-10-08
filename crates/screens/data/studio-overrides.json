@@ -1,0 +1,68 @@
+{
+  "_about": "Studio overrides applied IN MEMORY on top of the user's DOOH Screen Size Planner by planner-runtime.mjs (used by sort.mjs and matcher-check.mjs). The planner and AE sources in tools/src are never edited. Sizes confirmed by the user on 2026-09-29. customScreens: extra screens that are NOT in the planner are added in memory as ordinary single-screen matcher targets (planner files untouched).",
+  "screens": [
+    {
+      "plannerName": "Piccadilly",
+      "width": 2027,
+      "height": 720,
+      "confirmed": "2026-09-29",
+      "note": "Planner screens-data.js has 2026x720; the true face size is 2027x720 (Screen Manager preset)."
+    }
+  ],
+  "matcherUnits": [
+    {
+      "id": "combo-piccadilly",
+      "faceSize": "2027 x 720",
+      "acceptedFaceSizes": [
+        "2027 x 720"
+      ],
+      "combinedAccepted": [
+        "6080 x 720",
+        "2027 x 720"
+      ],
+      "confirmed": "2026-09-29",
+      "note": "Face 2027x720 (x3 → combined 6080x720). A 2027x720 face file passes; 2026x720 fails (flagged in separate-faces mode, outside in combined mode)."
+    },
+    {
+      "id": "sync-al-salam-sync",
+      "acceptedFaceSizes": [
+        "1536 x 576",
+        "3072 x 576"
+      ],
+      "combinedAccepted": [
+        "3072 x 576",
+        "1536 x 576"
+      ],
+      "confirmed": "2026-09-29",
+      "note": "1536x576 original duplicated side by side into the 3072x576 deliverable; both are valid (3072 = duplicated deliverable, 1536 = original)."
+    }
+  ],
+  "notInPlanner": {
+    "source": "src/ae-unified-button/AE_ScreenManager_V2.6/AE_ScreenManager_Config.json",
+    "groups": [
+      "AL Kout",
+      "360 Mall",
+      "Khairan Mall",
+      "Warehouse Mall",
+      "Dayarti",
+      "Print",
+      "Custom"
+    ],
+    "note": "Acknowledged by the user: these venues are not in the planner inventory, so the size matcher cannot check them. matcher-check reports them as NOT CHECKABLE (not in planner) instead of failing."
+  },
+  "customScreens": [
+    {
+      "name": "Tawfeer",
+      "aliases": [
+        "Tawfeer (1200x960)",
+        "Tawfeer 1200x960"
+      ],
+      "width": 1200,
+      "height": 960,
+      "type": "Indoor",
+      "location": "Tawfeer",
+      "confirmed": "2026-09-29",
+      "note": "Client screen not in the planner inventory (server folder M2R_Screens\\Tawfeer (1200x960)). Added IN MEMORY only as a custom matcher target so the final check can verify 1200x960 / 10s / 25fps. The planner's screens-data.js is not edited."
+    }
+  ]
+}

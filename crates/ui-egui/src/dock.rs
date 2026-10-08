@@ -50,10 +50,12 @@ pub enum PanelKind {
     CreateNullsFromPaths,
     /// Window ▸ VR Comp Editor (our own panel).
     VrCompEditor,
+    /// Window ▸ Screen Suite (Size Sorter, Screen Manager, Size Matcher).
+    ScreenSuite,
 }
 
 impl PanelKind {
-    pub const ALL: [PanelKind; 34] = [
+    pub const ALL: [PanelKind; 35] = [
         PanelKind::Project,
         PanelKind::EffectControls,
         PanelKind::Composition,
@@ -88,6 +90,7 @@ impl PanelKind {
         PanelKind::ContentAwareFill,
         PanelKind::CreateNullsFromPaths,
         PanelKind::VrCompEditor,
+        PanelKind::ScreenSuite,
     ];
     pub fn title(self) -> &'static str {
         match self {
@@ -127,6 +130,7 @@ impl PanelKind {
             PanelKind::ContentAwareFill => "Content-Aware Fill",
             PanelKind::CreateNullsFromPaths => "Create Nulls From Paths",
             PanelKind::VrCompEditor => "VR Comp Editor",
+            PanelKind::ScreenSuite => "Screen Suite",
         }
     }
     pub fn id(self) -> String {
@@ -367,6 +371,7 @@ pub fn workspace(name: &str) -> DockNode {
                             ContentAwareFill,
                             CreateNullsFromPaths,
                             VrCompEditor,
+                            ScreenSuite,
                         ],
                     ),
                 ),
@@ -387,7 +392,14 @@ pub fn workspace(name: &str) -> DockNode {
         _ => hsplit(
             FixedB(300.0),
             vsplit(Ratio(0.56), hsplit(FixedA(300.0), tabs(&[Project, EffectControls], 0), tabs(&[Composition, Layer], 0)), tabs(&[Timeline, RenderQueue], 0)),
-            stack(&[(Preview, true, Some(46.0)), (Properties, true, None), (Align, false, None), (Audio, false, None), (EffectsPresets, false, None)]),
+            stack(&[
+                (Preview, true, Some(46.0)),
+                (Properties, true, None),
+                (ScreenSuite, false, None),
+                (Align, false, None),
+                (Audio, false, None),
+                (EffectsPresets, false, None),
+            ]),
         ),
     }
 }

@@ -352,7 +352,7 @@ fn perform(app: &mut EffectcraftApp, ctx: &egui::Context, acts: Vec<Act>) {
             Ok(r) => {
                 if let Some(e) = r.get("error").filter(|e| !e.is_null()) {
                     let msg = e["message"].as_str().unwrap_or("script error").to_string();
-                    app.toast = Some((msg, ctx.input(|i| i.time)));
+                    app.toast = Some((msg, ctx.input(|i| i.time), true));
                 } else if let Some(o) = r["output"].as_str().filter(|o| !o.is_empty()) {
                     app.ui.status = o.lines().last().unwrap_or_default().to_string();
                 }

@@ -33,6 +33,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
+encodecraft-job = { workspace = true }
+effectcraft-screens = { workspace = true }
 rayon = { workspace = true }
 image = { workspace = true }
 web-time = { workspace = true }

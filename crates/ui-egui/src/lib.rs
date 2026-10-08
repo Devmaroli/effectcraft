@@ -198,7 +198,7 @@ pub struct EffectcraftApp {
     last_activity: (f64, u64),
     /// When the project last changed, and its revision then (see [`Self::editing`]).
     last_edit: (f64, u64),
-    pub(crate) toast: Option<(String, f64)>,
+    pub(crate) toast: Option<(String, f64, bool)>,
     /// Texture of the last CPU frame shown in the viewer and the key it came from.
     pub(crate) viewer_tex: Option<(egui::TextureHandle, FrameKey)>,
     /// The frames the other (passive) Composition viewers show, by viewer id.
@@ -435,6 +435,7 @@ impl EffectcraftApp {
                 PanelKind::Layer | PanelKind::Flowchart | PanelKind::Viewer(_) => PanelKind::Composition,
                 PanelKind::RenderQueue => PanelKind::Timeline,
                 PanelKind::EffectControls | PanelKind::History => PanelKind::Project,
+                PanelKind::ScreenSuite => PanelKind::Properties,
                 _ => PanelKind::EffectsPresets,
             };
             self.ui.dock.open_near(p, near);
@@ -947,7 +948,7 @@ impl EffectcraftApp {
                 let mut cut = p;
                 (cut.start, cut.end) = (p.first, (p.first + (fit - 1) * p.step).min(p.end));
                 self.playback.plan = Some(cut);
-                self.toast = Some((format!("Preview cut to {fit} of {n} frames: no more fit in the RAM preview (Settings ▸ Memory & CPU)"), now));
+                self.toast = Some((format!("Preview cut to {fit} of {n} frames: no more fit in the RAM preview (Settings ▸ Memory & CPU)"), now, false));
                 ctx.request_repaint();
                 return;
             }
@@ -1322,7 +1323,7 @@ impl EffectcraftApp {
                     panels::viewers::on_open_comp(self, c);
                     self.ui.timeline.pps = None;
                 }
-                effectcraft_engine::Event::Toast { message, .. } => self.toast = Some((message, ctx.input(|i| i.time))),
+                effectcraft_engine::Event::Toast { message, error } => self.toast = Some((message, ctx.input(|i| i.time), error)),
                 effectcraft_engine::Event::OpenUrl(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
                 // Frames are keyed by content: an edit keeps those of comps it doesn't touch.
                 effectcraft_engine::Event::ProjectChanged { .. } => {}
@@ -1426,18 +1427,24 @@ impl EffectcraftApp {
 
     fn draw_toast(&mut self, ui: &mut egui::Ui, full: egui::Rect) {
         let now = ui.input(|i| i.time);
-        let msg = if !self.ui.status.is_empty() {
-            Some(self.ui.status.clone())
+        let (msg, error) = if !self.ui.status.is_empty() {
+            (Some(self.ui.status.clone()), true)
         } else {
-            self.toast.as_ref().filter(|(_, at)| now - at < 4.0).map(|(m, _)| m.clone())
+            match self.toast.as_ref() {
+                Some((m, at, err)) if now - at < if *err { 8.0 } else { 4.0 } => (Some(m.clone()), *err),
+                _ => (None, false),
+            }
         };
         if let Some(m) = msg {
-            let t = &self.tokens;
-            let galley = ui.painter().layout_no_wrap(m, Tokens::ui(12.0), t.text);
+            let fg = if error { self.tokens.warning } else { self.tokens.text };
+            let bg = if error { egui::Color32::from_rgb(0x6a, 0x18, 0x10) } else { self.tokens.panel_bg };
+            let stroke = if error { self.tokens.danger } else { self.tokens.field_border };
+            let galley = ui.painter().layout_no_wrap(m.clone(), Tokens::ui(12.0), fg);
             let r = egui::Rect::from_min_size(egui::pos2(full.min.x + 16.0, full.max.y - 44.0), galley.size() + egui::vec2(24.0, 14.0));
-            ui.painter().rect_filled(r, 6.0, t.panel_bg);
-            ui.painter().rect_stroke(r, 6.0, egui::Stroke::new(1.0, t.field_border), egui::StrokeKind::Inside);
-            ui.painter().galley(r.min + egui::vec2(12.0, 7.0), galley, t.text);
+            ui.painter().rect_filled(r, 6.0, bg);
+            ui.painter().rect_stroke(r, 6.0, egui::Stroke::new(if error { 2.0 } else { 1.0 }, stroke), egui::StrokeKind::Inside);
+            ui.painter().galley(r.min + egui::vec2(12.0, 7.0), galley, fg);
+            self.auto.add("toast", r, &m);
             let resp = ui.interact(r, egui::Id::new("toast"), egui::Sense::click());
             if resp.clicked() {
                 self.ui.status.clear();
