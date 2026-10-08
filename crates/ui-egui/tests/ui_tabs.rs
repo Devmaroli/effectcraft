@@ -184,7 +184,13 @@ fn panels_dock_beside_others_and_gutters_resize_them() {
     let (fx, tl) = (rect(&h, "panel.EffectControls"), rect(&h, "panel.Timeline"));
     assert!(fx.max.x <= tl.min.x + 1.0 && (fx.center().y - tl.center().y).abs() < tl.height(), "{fx:?} {tl:?}");
     // The gutter on the Project panel's right edge: dragging it 60 px widens the panel by 60.
+    // Keep only Type visible so leftover width exists and goes to Name first.
+    effectcraft_ui_egui::panels::project::set_column(&mut h.state_mut().ui.project_columns, "size", false);
+    effectcraft_ui_egui::panels::project::set_column(&mut h.state_mut().ui.project_columns, "duration", false);
+    effectcraft_ui_egui::panels::project::set_column(&mut h.state_mut().ui.project_columns, "fps", false);
+    h.run_steps(2);
     let project = rect(&h, "panel.Project");
+    let name0 = rect(&h, "project.sort.name").width();
     let gutter = h
         .state()
         .auto
@@ -198,6 +204,8 @@ fn panels_dock_beside_others_and_gutters_resize_them() {
     drag(&mut h, gutter.center(), gutter.center() + egui::vec2(60.0, 0.0));
     let wider = rect(&h, "panel.Project");
     assert!((wider.width() - project.width() - 60.0).abs() < 2.0, "{} → {}", project.width(), wider.width());
+    let name1 = rect(&h, "project.sort.name").width();
+    assert!(name1 > name0 + 40.0, "widening the panel grows Name first: {name0} → {name1}");
 }
 
 /// Issue #171: the gaps between the right column's stacked panels drag to resize them (Preview

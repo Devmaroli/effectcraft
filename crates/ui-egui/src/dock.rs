@@ -928,7 +928,9 @@ pub fn layout(ui: &mut egui::Ui, node: &mut DockNode, rect: Rect, t: &Tokens, pa
 /// A gap between dock areas that drags to resize them (`vertical`: up and down), with a slightly
 /// larger hit area than the gap. Returns the drag this frame.
 fn gutter(ui: &mut egui::Ui, gap: Rect, vertical: bool, path: &str, t: &Tokens, reg: &mut crate::automation::Registry) -> Option<f32> {
-    let hit = gap.expand2(if vertical { vec2(0.0, 3.0) } else { vec2(3.0, 0.0) });
+    // Horizontal gutters (Project | Composition) get a wider hit so the panel edge is easy
+    // to grab against the viewer; vertical stacked gaps stay a little tighter.
+    let hit = gap.expand2(if vertical { vec2(0.0, 3.0) } else { vec2(8.0, 0.0) });
     let resp = ui.interact(hit, egui::Id::new(("dock-gutter", path.to_string())), Sense::drag());
     reg.add(&format!("dock.gutter.{path}"), hit, "gutter");
     if resp.hovered() || resp.dragged() {
