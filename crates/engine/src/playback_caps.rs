@@ -31,7 +31,7 @@ pub enum PreviewPrecision {
     F32Cpu,
     /// f16 working buffers when the adapter supports them.
     F16Gpu,
-    /// 8-bit display texture (safe for 8-bit sources; renders stay f32).
+    /// 8-bit display texture (viewer frames and GPU present). Final renders stay f32.
     Rgba8Display,
 }
 

@@ -91,6 +91,94 @@ pub(crate) fn frame_to_image_in(f: &VideoFrame, op: AlphaOp, mut buf: Vec<Px>) -
     img
 }
 
+/// Convert a FilmCraft frame, point-sampling every `scale_q/1000` source pixel so Half/Quarter
+/// preview does not expand a full-resolution f32 RGBA buffer. `scale_q >= 900` is native.
+pub(crate) fn frame_to_image_scaled(f: &VideoFrame, op: AlphaOp, buf: Vec<Px>, scale_q: u16) -> Image {
+    let step = preview_step(scale_q);
+    if step <= 1 {
+        return frame_to_image_in(f, op, buf);
+    }
+    let (sw, sh) = (f.width as usize, f.height as usize);
+    if sw == 0 || sh == 0 {
+        return Image::new(1, 1);
+    }
+    let (w, h) = ((sw / step).max(1), (sh / step).max(1));
+    let mut data = if buf.len() == w * h { buf } else { vec![[0.0; 4]; w * h] };
+    match &f.data {
+        PixelData::Rgba8(d) => {
+            data.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
+                let sy = (y * step).min(sh - 1);
+                let src = &d[sy * sw * 4..(sy + 1) * sw * 4];
+                for (x, o) in row.iter_mut().enumerate() {
+                    let sx = (x * step).min(sw - 1) * 4;
+                    *o = op.apply([U8[src[sx] as usize], U8[src[sx + 1] as usize], U8[src[sx + 2] as usize]], U8[src[sx + 3] as usize]);
+                }
+            });
+        }
+        PixelData::RgbaF32(d) => {
+            data.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
+                let sy = (y * step).min(sh - 1);
+                let src = &d[sy * sw * 4..(sy + 1) * sw * 4];
+                for (x, o) in row.iter_mut().enumerate() {
+                    let sx = (x * step).min(sw - 1) * 4;
+                    let a = src[sx + 3];
+                    let inv = if a > 0.0 { 1.0 / a } else { 0.0 };
+                    let c = [encode(src[sx] * inv) * a, encode(src[sx + 1] * inv) * a, encode(src[sx + 2] * inv) * a];
+                    *o = if op.mode == AlphaMode::Ignore { [c[0], c[1], c[2], 1.0] } else { [c[0], c[1], c[2], a] };
+                }
+            });
+        }
+        PixelData::Yuv8 { planes, chroma, alpha } => {
+            let yuv = Yuv::new(f.color.matrix, f.color.range, 8);
+            convert_yuv_step(
+                &mut data,
+                sw,
+                sh,
+                w,
+                h,
+                step,
+                *chroma,
+                [&planes[0][..], &planes[1][..], &planes[2][..]],
+                alpha.as_deref().map(|a| &a[..]),
+                255.0,
+                &yuv,
+                op,
+            );
+        }
+        PixelData::Yuv16 { planes, chroma, bits, alpha } => {
+            let yuv = Yuv::new(f.color.matrix, f.color.range, *bits);
+            let amax = ((1u32 << *bits) - 1) as f32;
+            convert_yuv_step(
+                &mut data,
+                sw,
+                sh,
+                w,
+                h,
+                step,
+                *chroma,
+                [&planes[0][..], &planes[1][..], &planes[2][..]],
+                alpha.as_deref().map(|a| &a[..]),
+                amax,
+                &yuv,
+                op,
+            );
+        }
+    }
+    Image { width: w as u32, height: h as u32, data }
+}
+
+fn preview_step(scale_q: u16) -> usize {
+    if scale_q >= 900 {
+        1
+    } else if scale_q >= 450 {
+        2
+    } else if scale_q >= 300 {
+        3
+    } else {
+        4
+    }
+}
+
 /// 0..255 → 0..1.
 static U8: [f32; 256] = {
     let mut t = [0f32; 256];
@@ -228,6 +316,56 @@ fn convert_yuv<T: Sample>(img: &mut Image, w: usize, h: usize, chroma: Chroma, p
             }
         },
     );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn convert_yuv_step<T: Sample>(
+    data: &mut [Px],
+    sw: usize,
+    sh: usize,
+    w: usize,
+    h: usize,
+    step: usize,
+    chroma: Chroma,
+    planes: [&[T]; 3],
+    alpha: Option<&[T]>,
+    amax: f32,
+    k: &Yuv,
+    op: AlphaOp,
+) {
+    let (sx, sy) = chroma.shifts();
+    let cw = sw.div_ceil(1 << sx);
+    let ch = sh.div_ceil(1 << sy);
+    let inv_amax = 1.0 / amax;
+    data.par_chunks_mut(w).take(h).enumerate().for_each(|(y, row)| {
+        let src_y = (y * step).min(sh - 1);
+        let yrow = &planes[0][src_y * sw..src_y * sw + sw];
+        let rgb = |x: usize| {
+            let src_x = (x * step).min(sw - 1);
+            let (cx, cy) = (src_x >> sx, src_y >> sy);
+            let cx = cx.min(cw - 1);
+            let cy = cy.min(ch - 1);
+            let u = (planes[1][cy * cw + cx].f() - k.c_off) * k.c_scale;
+            let v = (planes[2][cy * cw + cx].f() - k.c_off) * k.c_scale;
+            let yy = (yrow[src_x].f() - k.y_off) * k.y_scale;
+            [(yy + k.cr_r * v).clamp(0.0, 1.0), (yy - k.cr_g * v - k.cb_g * u).clamp(0.0, 1.0), (yy + k.cb_b * u).clamp(0.0, 1.0)]
+        };
+        match alpha {
+            None => {
+                for (x, o) in row.iter_mut().enumerate() {
+                    let c = rgb(x);
+                    *o = [c[0], c[1], c[2], 1.0];
+                }
+            }
+            Some(al) => {
+                let arow = &al[src_y * sw..src_y * sw + sw];
+                for (x, o) in row.iter_mut().enumerate() {
+                    let src_x = (x * step).min(sw - 1);
+                    *o = op.apply(rgb(x), (arow[src_x].f() * inv_amax).clamp(0.0, 1.0));
+                }
+            }
+        }
+    });
 }
 
 /// Convert a still decoded by the `image` crate. Float images (OpenEXR, float TIFF) hold linear

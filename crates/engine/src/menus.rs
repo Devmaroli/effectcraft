@@ -1075,6 +1075,7 @@ View
     Auto | view.res.auto
     Custom... | view.res.custom
     ---
+    Auto Resolution While Playing | view.adaptivePlayback
     Performance Readout | view.performance
   ---
   Use Display Color Management | view.displayColorManagement

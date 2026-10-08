@@ -49,7 +49,12 @@
 //! Plug a [`Gpu`] into [`Renderer::accel`] (it implements [`Accelerator`]); renders then use it
 //! when [`RenderOpts::backend`](effectcraft_render::RenderOpts) asks for it. The viewer can
 //! skip readback entirely with [`Gpu::render_display`], which leaves an RGBA8 texture for
-//! egui-wgpu to draw.
+//! egui-wgpu to draw. Playback presents that 8-bit texture; working textures stay `Rgba32Float`
+//! so 32-bpc renders keep headroom (Advanced 3D colour is `Rgba16Float` when the adapter
+//! supports it). EncodeCraft streaming and other GPU presenters should call
+//! [`Gpu::render_display`] / [`Accelerator::comp_frame`] rather than a second compositor. Single
+//! untransformed footage layers skip the composite walk ([`Renderer::simple_footage_canvas`])
+//! and upload the decoded frame directly.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 

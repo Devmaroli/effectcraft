@@ -236,13 +236,35 @@ fn drop_frames_default_on_and_resolution_badge_id() {
     let mut h = harness();
     assert!(h.state().session.prefs.previews.drop_frames);
     assert!(h.state().session.prefs.previews.adaptive_playback);
+    assert!(h.state().session.prefs.previews.cache_frames_when_idle);
     assert!(h.state().session.project.settings.use_proxies);
     h.run_steps(2);
     assert!(h.state().auto.find("viewer.playbackRes").is_some(), "resolution badge on the viewer");
+    assert!(h.state().auto.find("viewer.autoResToggle").is_some(), "Auto resolution toggle on the viewer bar");
     invoke(&mut h, "view.performance", json!({}));
     h.run_steps(2);
     assert!(h.state().session.prefs.previews.show_performance);
     assert!(h.state().auto.find("viewer.performance").is_some(), "performance readout overlay");
+}
+
+#[test]
+fn auto_resolution_toggle_persists_and_stops_adaptive_drops() {
+    let mut h = harness();
+    h.run_steps(2);
+    assert!(h.state().session.prefs.previews.adaptive_playback);
+    invoke(&mut h, "view.adaptivePlayback", json!({}));
+    assert!(!h.state().session.prefs.previews.adaptive_playback);
+    h.state_mut().ui.viewer.res = effectcraft_ui_egui::state::Resolution::Full;
+    h.state_mut().playback.playing = true;
+    h.state_mut().playback.adaptive_div = 4;
+    let playing = h.state().viewer_scale(1.0, 1.0);
+    assert!((playing - 1.0).abs() < 1e-9, "off stays at Full, got {playing}");
+    invoke(&mut h, "view.adaptivePlayback", json!({"value": true}));
+    assert!(h.state().session.prefs.previews.adaptive_playback);
+    let dropped = h.state().viewer_scale(1.0, 1.0);
+    assert!((dropped - 0.25).abs() < 1e-9, "{dropped}");
+    click(&mut h, "viewer.autoResToggle");
+    assert!(!h.state().session.prefs.previews.adaptive_playback);
 }
 
 #[test]
@@ -279,6 +301,7 @@ fn cache_frames_when_idle_fills_the_work_area() {
     let mut h = harness();
     let cid = h.state().session.active_comp_id().unwrap();
     let cached = |h: &Harness<'_, EffectcraftApp>| h.state().frames.cached_frames(&h.state().shown_series(cid)).len();
+    invoke(&mut h, "playback.cacheWhenIdle", json!({"value": false}));
     // Off: only a few frames ahead of the current time are prefetched (the work area is the
     // whole 240 frames).
     for _ in 0..120 {

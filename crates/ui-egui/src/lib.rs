@@ -200,7 +200,7 @@ pub struct EffectcraftApp {
     next_token: u64,
     pub(crate) last_ui_time: f64,
     /// When the user last did something (input or an edit): Cache Frames When Idle waits for
-    /// a second of quiet. (time, project revision then)
+    /// a short quiet spell. (time, project revision then)
     last_activity: (f64, u64),
     /// When the project last changed, and its revision then (see [`Self::editing`]).
     last_edit: (f64, u64),
@@ -1335,8 +1335,9 @@ impl EffectcraftApp {
             return;
         }
         let quiet = now - self.last_activity.0;
-        if quiet < 1.0 {
-            ctx.request_repaint_after(std::time::Duration::from_secs_f64(1.0 - quiet));
+        const IDLE: f64 = 0.4;
+        if quiet < IDLE {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(IDLE - quiet));
             return;
         }
         // An empty work area has nothing to cache.

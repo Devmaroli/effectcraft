@@ -32,8 +32,13 @@ pub(crate) fn render<'g>(e: &mut Enc<'g>, r: &Renderer, comp_id: ItemId, t: Tick
     if r.depth() > 16 || !e.g.fits(w, h) {
         return None;
     }
-    let mut canvas = e.zeros(w, h);
-    draw_comp(e, r, &ctx, &mut canvas)?;
+    let mut canvas = if let Some(fast) = r.simple_footage_canvas(&ctx, w, h) {
+        e.g.upload_image(&fast)?
+    } else {
+        let mut canvas = e.zeros(w, h);
+        draw_comp(e, r, &ctx, &mut canvas)?;
+        canvas
+    };
     let pipe = r.pipe();
     if let Some(c) = pipe.from_blend() {
         canvas = ops::convert(e, &canvas, &c);

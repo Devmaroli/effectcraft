@@ -6,8 +6,10 @@
 //!   (premultiplied f32, sRGB/Rec.709-encoded values, as the compositor expects) with a
 //!   memory-budgeted LRU frame cache, one decoder per source, and the decoder kept positioned for
 //!   sequential playback. Sequential playback decodes several frames ahead (default
-//!   [`DEFAULT_PREFETCH_DEPTH`]); Half/Quarter preview may cache movie frames already
-//!   downsampled. Hardware decode is probed in [`hwdec`] (D3D11VA / Vulkan Video) and falls
+//!   [`DEFAULT_PREFETCH_DEPTH`]); Half/Quarter preview asks FilmCraft for a reduced-resolution
+//!   frame (`FrameRequest.scale`) and, if the decoder still returns native pixels, converts only
+//!   the preview-sized samples so RAM does not keep a full f32 frame. Hardware decode is probed in
+//!   [`hwdec`] (D3D11VA / Vulkan Video) and falls
 //!   back to FilmCraft's CPU path automatically. Also audio ([`MediaPool::audio_samples`]) and
 //!   thumbnails.
 //!

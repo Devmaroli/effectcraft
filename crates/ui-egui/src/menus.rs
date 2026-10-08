@@ -393,6 +393,12 @@ pub fn invoke(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str, params: V
         app.ui.viewer.res = Resolution::Auto;
         return Ok(Value::Null);
     }
+    if id == "view.adaptivePlayback" {
+        let mut on = app.session.prefs.previews.adaptive_playback;
+        let r = toggle(&mut on, &params);
+        app.set_pref("previews.adaptivePlayback", r.clone())?;
+        return Ok(r);
+    }
     if id == "view.performance" {
         let mut on = app.session.prefs.previews.show_performance;
         let r = toggle(&mut on, &params);
@@ -633,6 +639,12 @@ pub fn frontend(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str, p: Valu
     if id == "view.res.auto" {
         app.ui.viewer.res = Resolution::Auto;
         return Ok(Value::Null);
+    }
+    if id == "view.adaptivePlayback" {
+        let mut on = app.session.prefs.previews.adaptive_playback;
+        let r = toggle(&mut on, &p);
+        app.set_pref("previews.adaptivePlayback", r.clone())?;
+        return Ok(r);
     }
     if id == "view.performance" {
         let mut on = app.session.prefs.previews.show_performance;
@@ -1220,6 +1232,7 @@ pub(crate) fn entry_checked(app: &EffectcraftApp, e: &MenuEntry) -> Option<bool>
             Some(v.res.label().eq_ignore_ascii_case(e.command.trim_start_matches("view.res.")))
         }
         "view.res.auto" => Some(v.res == Resolution::Auto),
+        "view.adaptivePlayback" => Some(app.session.prefs.previews.adaptive_playback),
         "view.performance" => Some(app.session.prefs.previews.show_performance),
         "window.workspace" => Some(pstr("name").is_some_and(|n| n == app.ui.workspace)),
         "view.panelBackground" if e.params.get("pick").is_none() => {

@@ -13,8 +13,8 @@
 //!   item changes the key, so stale pixels are never returned.
 //!
 //! Layers whose pixels depend on time in ways the property values do not capture (time-based
-//! effects such as Noise or Wave Warp, Wiggle Paths, footage, precomps) either fold the layer
-//! time into the key or are not cached.
+//! effects such as Noise or Wave Warp, Wiggle Paths, footage, precomps) fold the source/nested
+//! time into the key so unchanged layers and static precomps are reused from frame to frame.
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -550,8 +550,9 @@ pub fn plate_key(
 }
 
 /// Cache key for the processed (source → masks → effects) buffer of `layer` at the context
-/// time, or `None` when the layer must not be cached (footage, precomps, cameras, adjustment
-/// layers…).
+/// time, or `None` when the layer must not be cached (cameras, lights, adjustment layers…).
+/// Footage with masks/effects is keyed by source time; precomps by nested content (and nested
+/// time when that content is not static).
 pub fn layer_key(ctx: &EvalCtx, layer: &Layer, scale: f64, draft: bool, blur: bool) -> Option<u64> {
     // Time effects see property values at other times. Keyframes are part of the hashed
     // structure (and the layer time is folded in), but expressions may read other layers at
@@ -610,9 +611,17 @@ fn key_any(ctx: &EvalCtx, layer: &Layer, scale: f64, draft: bool, blur: bool, fo
             hash_debug(&mut h, s);
         }
         LayerSource::Text | LayerSource::Shape => {}
-        LayerSource::Footage { item } if footage => {
+        LayerSource::Footage { item } => {
             let it = ctx.project.item(*item)?;
             let ItemKind::Footage(f) = &it.kind else { return None };
+            // Raw footage with no masks/effects is served from the media pool; skip a second copy
+            // unless this is an input_key (time effects read neighbouring frames).
+            let work = footage
+                || layer.masks().is_some_and(|m| m.groups().any(|g| g.enabled))
+                || (layer.switches.effects && layer.effects().is_some_and(|fx| fx.groups().any(|g| g.enabled)));
+            if !work {
+                return None;
+            }
             hash_debug(&mut h, f);
             // A proxy (and its Use Proxy switch) changes the pixels.
             hash_debug(&mut h, &it.proxy);
@@ -620,6 +629,15 @@ fn key_any(ctx: &EvalCtx, layer: &Layer, scale: f64, draft: bool, blur: bool, fo
             ctx.source_time(layer).0.hash(&mut h);
             // Frame blending mixes neighbouring source frames.
             ctx.comp.enable_frame_blending.hash(&mut h);
+        }
+        LayerSource::Comp { item } => {
+            let nc = ctx.project.comp(*item)?;
+            let nctx = EvalCtx { comp_id: *item, comp: nc, time: ctx.nested_time(layer), ..*ctx };
+            hash_debug(&mut h, nc);
+            item.hash(&mut h);
+            if !nc.layers.iter().all(|l| layer_is_static(&nctx, l)) {
+                nctx.time.0.hash(&mut h);
+            }
         }
         _ => return None,
     }

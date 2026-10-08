@@ -549,6 +549,7 @@ const JAPANESE: &[(&str, &str, &str)] = &[
     ("view.res.quarter", "Quarter", "1/4画質"),
     ("view.res.custom", "Custom...", "カスタム..."),
     ("view.res.auto", "Auto", "自動"),
+    ("view.adaptivePlayback", "Auto Resolution While Playing", "再生中に解像度を自動調整"),
     ("view.performance", "Performance Readout", "パフォーマンス表示"),
     ("view.displayColorManagement", "Use Display Color Management", "ディスプレイカラーマネジメントを使用"),
     ("", "Simulate Output", "出力をシミュレート"),
