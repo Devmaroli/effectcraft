@@ -355,8 +355,16 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
                 column_divider(app, ui, &hp, hdr, key, hr.max.x, displayed, &t);
             }
         }
-        let hresp = ui.interact(Rect::from_min_max(pos2(x, hdr.min.y), hdr.max), egui::Id::new("proj-hdr-rest"), Sense::click());
-        column_menu(app, &hresp);
+        // Leftover after Name/Label/optional columns is a right-click target for the
+        // column menu. On a maximized panel it is a ~26×20 strip; `project.columns` on
+        // the full header is too large for the agent-audit overlap rule, so the strip
+        // needs its own id.
+        let rest = Rect::from_min_max(pos2(x, hdr.min.y), hdr.max);
+        if rest.width() >= 2.0 {
+            let hresp = ui.interact(rest, egui::Id::new("proj-hdr-rest"), Sense::click());
+            column_menu(app, &hresp);
+            app.auto.add("project.columns.rest", rest, "Columns (right-click to show or hide)");
+        }
         app.auto.add("project.columns", hdr, "Columns (right-click to show or hide)");
     }
     // Rows.

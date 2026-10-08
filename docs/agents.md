@@ -174,6 +174,9 @@ build real projects through these interfaces; they are worked examples of everyt
   app from an absolute existing path (same folder as `effectcraft`, a well-known install
   location, or `ENCODECRAFT_BIN` — never `PATH`). Leave `output_dir` unset. Unsaved or dirty
   projects fail with a save-first error. EncodeCraft renders through `effectcraft-cli`.
+  For the faster path (raw frames to FFmpeg, a warm `serve` process, JSON `frame N/total`
+  progress, `--gpu` with CPU fallback) see [render-streaming.md](render-streaming.md).
+  `render --format prores --out FILE` remains the encoded-file fallback.
 * **Screen Suite** (this fork, **not ported yet**): Kuwait DOOH booking → comps → EncodeCraft →
   size QC. Read [screen-suite-analysis.md](screen-suite-analysis.md) for per-tool behaviour,
   architecture mapping, and UX options. Do not implement until a UX direction is chosen.
