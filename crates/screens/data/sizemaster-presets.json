@@ -84,13 +84,6 @@
     "selected": false
   },
   {
-    "name": "Aqarat",
-    "w": 672,
-    "h": 1836,
-    "group": "DOOH",
-    "selected": false
-  },
-  {
     "name": "Assima G & M Floors",
     "w": 2304,
     "h": 1152,
@@ -190,7 +183,7 @@
   },
   {
     "name": "Kuwait Gate",
-    "w": 4460,
+    "w": 4459,
     "h": 378,
     "group": "DOOH",
     "selected": false
@@ -248,13 +241,6 @@
     "name": "Platinum Square",
     "w": 1440,
     "h": 1008,
-    "group": "DOOH",
-    "selected": false
-  },
-  {
-    "name": "Slayel and Yaal",
-    "w": 1080,
-    "h": 1920,
     "group": "DOOH",
     "selected": false
   },
@@ -501,27 +487,6 @@
     "w": 624,
     "h": 2496,
     "group": "DOOH",
-    "selected": false
-  },
-  {
-    "name": "Grand cinema",
-    "w": 2048,
-    "h": 1080,
-    "group": "Cinemas",
-    "selected": false
-  },
-  {
-    "name": "SKY Flat",
-    "w": 1998,
-    "h": 1080,
-    "group": "Cinemas",
-    "selected": false
-  },
-  {
-    "name": "SKY Scoop",
-    "w": 2048,
-    "h": 858,
-    "group": "Cinemas",
     "selected": false
   }
 ]

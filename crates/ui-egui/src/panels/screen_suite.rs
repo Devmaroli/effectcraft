@@ -557,6 +557,7 @@ fn sort_body(app: &EffectcraftApp) -> Value {
         "governorate": st.filters.governorate.clone(),
         "category": st.filters.category.clone(),
         "search": st.filters.search.clone(),
+        "animated": st.filters.animated,
     })
 }
 
@@ -568,10 +569,12 @@ fn filters_block(app: &mut EffectcraftApp, ui: &mut egui::Ui) {
     let group = app.session.state.screen.filters.group.clone();
     let gov = app.session.state.screen.filters.governorate.clone();
     let cat = app.session.state.screen.filters.category.clone();
+    let animated = app.session.state.screen.filters.animated;
     let active = usize::from(!kind.is_empty())
         + usize::from(!group.is_empty())
         + usize::from(!gov.is_empty())
         + usize::from(!cat.is_empty())
+        + usize::from(animated)
         + usize::from(cleanup)
         + usize::from(flexible);
     wrap_chips(ui, |ui| {
@@ -601,6 +604,9 @@ fn filters_block(app: &mut EffectcraftApp, ui: &mut egui::Ui) {
         }
         if !cat.is_empty() {
             pill(ui, &format!("Category: {cat}"), Color32::from_rgb(0x16, 0x30, 0x4f), Color32::from_rgb(0x79, 0xb4, 0xff));
+        }
+        if animated {
+            pill(ui, "Animated", Color32::from_rgb(0x3a, 0x2a, 0x10), Color32::from_rgb(0xf5, 0xd0, 0x76));
         }
     });
     if !open && !sorted_ready(app) {
@@ -664,6 +670,12 @@ fn filters_block(app: &mut EffectcraftApp, ui: &mut egui::Ui) {
                 app.auto.add("screenSuite.filter.category", r.rect, "category");
                 if r.changed() {
                     app.session.state.screen.filters.category = c;
+                }
+                let mut animated = app.session.state.screen.filters.animated;
+                let r = ui.checkbox(&mut animated, "Animated");
+                app.auto.add("screenSuite.filter.animated", r.rect, "Animated");
+                if r.changed() {
+                    app.session.state.screen.filters.animated = animated;
                 }
             });
         },
@@ -1159,26 +1171,42 @@ pub fn show_library(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         let r = ui.add(egui::TextEdit::singleline(&mut q).desired_width(140.0).hint_text("Search"));
         app.auto.add("screenLibrary.search", r.rect, "search");
         ui.memory_mut(|m| m.data.insert_temp(egui::Id::new("screenLibrary.search"), q));
-        ui.label(RichText::new("Nothing is added to the library unless you type it here.").small().color(Color32::from_gray(140)));
+        let mut animated = app.session.state.screen.filters.animated;
+        let r = ui.checkbox(&mut animated, "Animated");
+        app.auto.add("screenLibrary.filter.animated", r.rect, "Animated");
+        if r.changed() {
+            app.session.state.screen.filters.animated = animated;
+        }
+        ui.label(RichText::new("Nothing is added to the library unless you type it here. Hidden rows are still sent.").small().color(Color32::from_gray(140)));
     });
     let search = main_ui.memory(|m| m.data.get_temp::<String>(egui::Id::new("screenLibrary.search")).unwrap_or_default());
     let search_n = effectcraft_screens::normalize(&search);
-    paint_library_table(app, &mut main_ui, &merged, &issues, section == "issues", &search_n);
+    let anim_only = app.session.state.screen.filters.animated;
+    paint_library_table(app, &mut main_ui, &merged, &issues, section == "issues", &search_n, anim_only);
 }
 
-fn paint_library_table(app: &mut EffectcraftApp, ui: &mut egui::Ui, merged: &[Value], issues: &[Value], issues_only: bool, search: &str) {
+fn paint_library_table(app: &mut EffectcraftApp, ui: &mut egui::Ui, merged: &[Value], issues: &[Value], issues_only: bool, search: &str, anim_only: bool) {
     let avail = ui.available_width().max(520.0);
-    let w_name = 200.0;
-    let w_w = 72.0;
-    let w_h = 72.0;
-    let w_group = 100.0;
-    let w_also = 118.0;
-    let w_check = (avail - w_name - w_w - w_h - w_group - w_also).max(160.0);
-    let xs = [0.0, w_name, w_name + w_w, w_name + w_w + w_h, w_name + w_w + w_h + w_group, w_name + w_w + w_h + w_group + w_also];
-    let ws = [w_name, w_w, w_h, w_group, w_also, w_check];
+    let w_name = 176.0;
+    let w_w = 64.0;
+    let w_h = 64.0;
+    let w_group = 88.0;
+    let w_anim = 78.0;
+    let w_also = 110.0;
+    let w_check = (avail - w_name - w_w - w_h - w_group - w_anim - w_also).max(140.0);
+    let xs = [
+        0.0,
+        w_name,
+        w_name + w_w,
+        w_name + w_w + w_h,
+        w_name + w_w + w_h + w_group,
+        w_name + w_w + w_h + w_group + w_anim,
+        w_name + w_w + w_h + w_group + w_anim + w_also,
+    ];
+    let ws = [w_name, w_w, w_h, w_group, w_anim, w_also, w_check];
     let (hdr, _) = ui.allocate_exact_size(Vec2::new(avail, 22.0), Sense::hover());
     ui.painter().rect_filled(hdr, 0.0, Color32::from_rgb(0x18, 0x18, 0x18));
-    for (i, title) in ["Name", "Width", "Height", "Group", "Also in", "Check"].iter().enumerate() {
+    for (i, title) in ["Name", "Width", "Height", "Group", "Animated", "Also in", "Check"].iter().enumerate() {
         let align = if i == 1 || i == 2 { Layout::right_to_left(Align::Center) } else { Layout::left_to_right(Align::Center) };
         table_cell(ui, hdr, xs[i], ws[i], align, |ui| {
             ui.label(RichText::new(*title).small().strong().color(MUTED));
@@ -1191,6 +1219,9 @@ fn paint_library_table(app: &mut EffectcraftApp, ui: &mut egui::Ui, merged: &[Va
         .filter(|(_, row)| {
             let name = row.get("name").and_then(Value::as_str).unwrap_or("");
             if !search.is_empty() && !effectcraft_screens::normalize(name).contains(search) {
+                return false;
+            }
+            if anim_only && !row.get("animated").and_then(Value::as_bool).unwrap_or(false) {
                 return false;
             }
             if issues_only && issues.iter().all(|iss| iss.get("row").and_then(Value::as_str) != Some(name)) {
@@ -1209,6 +1240,7 @@ fn paint_library_table(app: &mut EffectcraftApp, ui: &mut egui::Ui, merged: &[Va
             let sm = row.get("inManager").and_then(Value::as_bool).unwrap_or(false);
             let sz = row.get("inSizemaster").and_then(Value::as_bool).unwrap_or(false);
             let sa = row.get("inAdapter").and_then(Value::as_bool).unwrap_or(false);
+            let mut animated = row.get("animated").and_then(Value::as_bool).unwrap_or(false);
             let row_h = 28.0;
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(avail, row_h), Sense::hover());
             let fill = if issue.is_some() {
@@ -1236,6 +1268,13 @@ fn paint_library_table(app: &mut EffectcraftApp, ui: &mut egui::Ui, merged: &[Va
                 }
             });
             table_cell(ui, rect, xs[4], ws[4], Layout::left_to_right(Align::Center), |ui| {
+                let r = ui.checkbox(&mut animated, "");
+                app.auto.add(&format!("screenLibrary.animated.{i}"), r.rect, "animated");
+                if r.changed() {
+                    exec(app, "screen.library.edit", json!({"name": name, "animated": animated}));
+                }
+            });
+            table_cell(ui, rect, xs[5], ws[5], Layout::left_to_right(Align::Center), |ui| {
                 if sm {
                     pill(ui, "SM", Color32::from_rgb(0x16, 0x30, 0x4f), Color32::from_rgb(0x79, 0xb4, 0xff));
                 }
@@ -1246,7 +1285,7 @@ fn paint_library_table(app: &mut EffectcraftApp, ui: &mut egui::Ui, merged: &[Va
                     pill(ui, "SA", Color32::from_rgb(0x2a, 0x21, 0x3a), Color32::from_rgb(0xc4, 0xb5, 0xfd));
                 }
             });
-            table_cell(ui, rect, xs[5], ws[5], Layout::left_to_right(Align::Center), |ui| {
+            table_cell(ui, rect, xs[6], ws[6], Layout::left_to_right(Align::Center), |ui| {
                 if let Some(iss) = issue {
                     let msg = iss.get("message").and_then(Value::as_str).unwrap_or("Issue");
                     let short = msg.split('·').next().unwrap_or(msg).trim();

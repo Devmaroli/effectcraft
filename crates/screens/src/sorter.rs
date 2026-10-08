@@ -32,16 +32,22 @@ pub struct SorterFilters {
     pub category: String,
     #[serde(default)]
     pub search: String,
+    /// When true, hide screens that are not Content Type = Animated.
+    #[serde(default)]
+    pub animated: bool,
 }
 
 impl SorterFilters {
     pub fn is_empty(&self) -> bool {
-        self.group.is_empty() && self.kind.is_empty() && self.governorate.is_empty() && self.category.is_empty() && self.search.is_empty()
+        self.group.is_empty() && self.kind.is_empty() && self.governorate.is_empty() && self.category.is_empty() && self.search.is_empty() && !self.animated
     }
 
     pub fn allows(&self, s: &Screen) -> bool {
         let hit = |want: &str, got: &str| want.is_empty() || normalize(got) == normalize(want);
         if !hit(&self.group, &s.group) || !hit(&self.kind, &s.kind) || !hit(&self.governorate, &s.governorate) || !hit(&self.category, &s.category) {
+            return false;
+        }
+        if self.animated && !s.animated {
             return false;
         }
         if self.search.is_empty() {

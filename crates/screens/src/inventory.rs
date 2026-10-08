@@ -30,6 +30,13 @@ pub struct Screen {
     /// Not in the planner inventory (matcher: NOT CHECKABLE).
     #[serde(default)]
     pub not_in_planner: bool,
+    /// Content Type = Animated in the DOOH sheet. Filters may hide these rows.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub animated: bool,
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
 }
 
 impl Screen {
@@ -135,6 +142,10 @@ impl Library {
         ensure_tawfeer(&mut sizemaster);
         let mut combiners = load_combiners(include_str!("../data/combiners.json"));
         fix_palm_trees(&mut screens, &mut presets, &mut adapter, &mut sizemaster, &mut combiners);
+        sync_preset_sizes_from_screens(&screens, &mut presets);
+        sync_preset_sizes_from_screens(&screens, &mut adapter);
+        sync_preset_sizes_from_screens(&screens, &mut sizemaster);
+        sync_combiner_faces_from_screens(&screens, &mut combiners);
         Self { screens, presets, adapter, sizemaster, combiners }
     }
 
@@ -143,9 +154,30 @@ impl Library {
         self.screens.iter().find(|s| normalize(&s.name) == n)
     }
 
+    pub fn screen_lookup(&self, name: &str) -> Option<&Screen> {
+        let n = normalize(name);
+        self.screens.iter().find(|s| normalize(&s.name) == n).or_else(|| self.screens.iter().find(|s| s.aliases.iter().any(|a| normalize(a) == n)))
+    }
+
     pub fn preset_by_name(&self, name: &str) -> Option<&Preset> {
         let n = normalize(name);
         self.presets.iter().find(|p| normalize(&p.name) == n)
+    }
+
+    /// Single source of truth for insert + new comps: inventory size wins, then size-mode alias, then SM preset.
+    pub fn canonical_wh(&self, name: &str) -> Option<(u32, u32, String)> {
+        if let Some(s) = self.screen_lookup(name) {
+            return Some((s.width, s.height, s.group.clone()));
+        }
+        if let Some(alias) = size_mode_alias(name) {
+            if let Some(s) = self.screen_lookup(alias) {
+                return Some((s.width, s.height, s.group.clone()));
+            }
+            if let Some(p) = self.preset_by_name(alias) {
+                return Some((p.width, p.height, p.group.clone()));
+            }
+        }
+        self.preset_by_name(name).map(|p| (p.width, p.height, p.group.clone()))
     }
 
     pub fn filter_values(&self) -> (Vec<String>, Vec<String>, Vec<String>, Vec<String>) {
@@ -299,7 +331,42 @@ fn add_custom_screens(screens: &mut Vec<Screen>) {
         custom: true,
         aliases: vec!["Tawfeer (1200x960)".into(), "Tawfeer 1200x960".into()],
         not_in_planner: false,
+        animated: false,
     });
+}
+
+/// Keep SM / Adapter / SizeMaster lists on the same width/height as the inventory row of the same name.
+/// SizeMaster's Al Salam Sync 3072×576 entry is the combined deliverable, not the face — leave it.
+fn sync_preset_sizes_from_screens(screens: &[Screen], presets: &mut [Preset]) {
+    for p in presets.iter_mut() {
+        if is_al_salam_sync(&p.name) && p.width == 3072 && p.height == 576 {
+            continue;
+        }
+        let n = normalize(&p.name);
+        if let Some(s) = screens.iter().find(|s| normalize(&s.name) == n || s.aliases.iter().any(|a| normalize(a) == n)) {
+            p.width = s.width;
+            p.height = s.height;
+        }
+    }
+}
+
+fn names_close(a: &str, b: &str) -> bool {
+    let (a, b) = (normalize(a), normalize(b));
+    !a.is_empty() && !b.is_empty() && (a == b || a.contains(&b) || b.contains(&a) || (a.contains("palm") && b.contains("palm")))
+}
+
+/// Combiner `match` pixels follow the live member screen. Layout, count and forced combined width stay as configured.
+fn sync_combiner_faces_from_screens(screens: &[Screen], combiners: &mut [Combiner]) {
+    for c in combiners.iter_mut() {
+        for col in &mut c.columns {
+            if col.screen_name.is_empty() {
+                continue;
+            }
+            if let Some(s) = screens.iter().find(|s| names_close(&s.name, &col.screen_name) || s.aliases.iter().any(|a| names_close(a, &col.screen_name))) {
+                col.match_wh = Some((s.width, s.height));
+            }
+        }
+    }
 }
 
 fn apply_preset_overrides(presets: &mut [Preset]) {

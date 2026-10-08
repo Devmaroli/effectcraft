@@ -86,6 +86,19 @@ impl CombinerLayout {
         Self::from_unique_sources(c, unique_source_slots(c))
     }
 
+    /// Same layout, with each column's face size taken from the live library screen when known.
+    pub fn from_library(lib: &Library, c: &Combiner) -> Self {
+        let mut resolved = c.clone();
+        for col in &mut resolved.columns {
+            if let Some((w, h, _)) = lib.canonical_wh(&col.screen_name) {
+                col.match_wh = Some((w, h));
+            } else if let Some(s) = lib.screens.iter().find(|s| names_related(&s.name, &col.screen_name)) {
+                col.match_wh = Some((s.width, s.height));
+            }
+        }
+        Self::from_combiner(&resolved)
+    }
+
     /// Layout for `unique_sources` matching source comps/footage items.
     /// Extra sources beyond [`unique_source_slots`] stack additional copies of the configured
     /// layout vertically and produce a [`DupWarning`].
@@ -172,7 +185,7 @@ fn place(screen: &str, left: f64, top: f64, w: u32, h: u32) -> FacePlacement {
 /// Combiners whose every column is among `selected` names (normalized, aliases allowed).
 pub fn active_combiners(lib: &Library, selected: &[String]) -> Vec<CombinerLayout> {
     let sel: Vec<String> = selected.iter().map(|s| normalize(s)).collect();
-    lib.combiners.iter().filter(|c| c.columns.iter().all(|col| column_selected(&sel, &col.screen_name))).map(CombinerLayout::from_combiner).collect()
+    lib.combiners.iter().filter(|c| c.columns.iter().all(|col| column_selected(&sel, &col.screen_name))).map(|c| CombinerLayout::from_library(lib, c)).collect()
 }
 
 fn column_selected(sel: &[String], screen: &str) -> bool {
@@ -211,7 +224,7 @@ pub fn accepted_sizes_for(lib: &Library, screen_name: &str) -> Vec<AcceptedSize>
         }
     }
     for c in &lib.combiners {
-        let lay = CombinerLayout::from_combiner(c);
+        let lay = CombinerLayout::from_library(lib, c);
         if lay.faces.iter().any(|f| names_related(&f.screen, screen_name) || names_related(&lay.name, screen_name)) {
             let copies = c.columns.iter().map(|col| col.count.max(1)).max().unwrap_or(1);
             push_unique(

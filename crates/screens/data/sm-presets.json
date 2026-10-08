@@ -50,8 +50,8 @@
   },
   {
     "name": "Al Nassar Tower",
-    "w": 2688,
-    "h": 1152,
+    "w": 1536,
+    "h": 576,
     "group": "DOOH",
     "selected": false
   },
@@ -87,13 +87,6 @@
     "name": "Al Zawya - Screen 2 (right side)",
     "w": 1040,
     "h": 720,
-    "group": "DOOH",
-    "selected": false
-  },
-  {
-    "name": "Aqarat",
-    "w": 672,
-    "h": 1836,
     "group": "DOOH",
     "selected": false
   },
@@ -197,14 +190,14 @@
   },
   {
     "name": "Khalijiya",
-    "w": 2304,
-    "h": 1008,
+    "w": 1536,
+    "h": 576,
     "group": "DOOH",
     "selected": false
   },
   {
     "name": "Kuwait Gate",
-    "w": 4460,
+    "w": 4459,
     "h": 378,
     "group": "DOOH",
     "selected": false
@@ -262,13 +255,6 @@
     "name": "Platinum Square",
     "w": 1440,
     "h": 1008,
-    "group": "DOOH",
-    "selected": false
-  },
-  {
-    "name": "Slayel and Yaal",
-    "w": 1080,
-    "h": 1920,
     "group": "DOOH",
     "selected": false
   },
@@ -523,68 +509,5 @@
     "h": 384,
     "group": "Print",
     "selected": false
-  },
-  {
-    "name": "Sultan Column",
-    "w": 768,
-    "h": 384,
-    "selected": false,
-    "group": "Custom"
-  },
-  {
-    "name": "Sultan Column",
-    "w": 512,
-    "h": 384,
-    "selected": false,
-    "group": "Custom"
-  },
-  {
-    "name": "Sultan Column",
-    "w": 384,
-    "h": 384,
-    "selected": false,
-    "group": "Custom"
-  },
-  {
-    "name": "Sultan Column",
-    "w": 640,
-    "h": 384,
-    "selected": false,
-    "group": "Custom"
-  },
-  {
-    "name": "Sultan Column",
-    "w": 640,
-    "h": 640,
-    "selected": false,
-    "group": "Custom"
-  },
-  {
-    "name": "Sultan Column",
-    "w": 576,
-    "h": 640,
-    "selected": false,
-    "group": "Custom"
-  },
-  {
-    "name": "Sultan Column",
-    "w": 448,
-    "h": 640,
-    "selected": false,
-    "group": "Custom"
-  },
-  {
-    "name": "Sultan Column",
-    "w": 512,
-    "h": 640,
-    "selected": false,
-    "group": "Custom"
-  },
-  {
-    "name": "Sultan Column",
-    "w": 640,
-    "h": 640,
-    "selected": false,
-    "group": "Custom"
   }
 ]
