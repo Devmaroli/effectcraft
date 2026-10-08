@@ -1,23 +1,30 @@
 //! Window ▸ Screen Suite — Option 1 tool rail (v2): Size Sorter → Screen Manager → EncodeCraft.
 
-use effectcraft_screens::sorter::hidden_row_count;
+use effectcraft_screens::sorter::{hidden_row_count, row_size_text};
 use effectcraft_screens::{AlertLevel, CompNameFrom, JobMode, MatchMode, PanelAlert, collect_alerts, default_send_preset, tab_alert_count};
-use egui::{Color32, CornerRadius, Rect, RichText, Stroke, Vec2};
+use egui::{Align, Color32, CornerRadius, FontId, Layout, Rect, RichText, Sense, Stroke, Vec2, pos2};
 use serde_json::{Value, json};
 
 use crate::EffectcraftApp;
 use crate::dock::PanelKind;
+use crate::icons::{self, Icon};
+use crate::panels::forms::Field;
 
-const TOOLS: [(&str, &str, &str, &str); 8] = [
-    ("booking", "Size Sorter", "screenSuite.tab.booking", "Alt+1"),
-    ("build", "Screen Manager", "screenSuite.tab.build", "Alt+2"),
-    ("adapter", "Screen Adapter", "screenSuite.tab.adapter", "Alt+3"),
-    ("sizeMaster", "SizeMaster", "screenSuite.tab.sizeMaster", "Alt+4"),
-    ("freeze", "Freeze", "screenSuite.tab.freeze", "Alt+5"),
-    ("screenshot", "Screenshot", "screenSuite.tab.screenshot", "Alt+6"),
-    ("renamer", "Renamer", "screenSuite.tab.renamer", "Alt+7"),
-    ("qc", "Size Matcher", "screenSuite.tab.qc", "Alt+8"),
+const TOOLS: [(&str, &str, &str, &str, Icon); 8] = [
+    ("booking", "Size Sorter", "screenSuite.tab.booking", "Alt+1", Icon::Grid),
+    ("build", "Screen Manager", "screenSuite.tab.build", "Alt+2", Icon::Comp),
+    ("adapter", "Screen Adapter", "screenSuite.tab.adapter", "Alt+3", Icon::Link),
+    ("sizeMaster", "SizeMaster", "screenSuite.tab.sizeMaster", "Alt+4", Icon::Rectangle),
+    ("freeze", "Freeze", "screenSuite.tab.freeze", "Alt+5", Icon::Pause),
+    ("screenshot", "Screenshot", "screenSuite.tab.screenshot", "Alt+6", Icon::Snapshot),
+    ("renamer", "Renamer", "screenSuite.tab.renamer", "Alt+7", Icon::Type),
+    ("qc", "Size Matcher", "screenSuite.tab.qc", "Alt+8", Icon::Checker),
 ];
+
+const BLUE: Color32 = Color32::from_rgb(0x2f, 0x6f, 0xd6);
+const MUTED: Color32 = Color32::from_gray(140);
+const ROW_HOVER: Color32 = Color32::from_rgb(0x24, 0x2c, 0x38);
+const ROW_SEL: Color32 = Color32::from_rgb(0x1a, 0x2e, 0x4a);
 
 fn exec(app: &mut EffectcraftApp, id: &str, p: Value) {
     match app.session.execute(id, p) {
@@ -63,10 +70,54 @@ fn fg_for(level: AlertLevel) -> Color32 {
     }
 }
 
+/// Compact single-line pill (~20px). Painted at an exact size so wrapping layouts
+/// cannot squeeze the text onto two lines and balloon `CornerRadius(99)` into an oval.
 fn pill(ui: &mut egui::Ui, text: &str, fill: Color32, fg: Color32) {
-    egui::Frame::new().fill(fill).corner_radius(CornerRadius::same(99)).inner_margin(egui::Margin::symmetric(8, 2)).show(ui, |ui| {
-        ui.label(RichText::new(text).size(11.0).color(fg).strong());
-    });
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), FontId::proportional(10.5), fg);
+    let pad_x = 7.0;
+    let size = Vec2::new((galley.size().x + pad_x * 2.0).ceil().max(16.0), 20.0);
+    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+    ui.painter().rect_filled(rect, CornerRadius::same(99), fill);
+    let pos = pos2(rect.center().x - galley.size().x * 0.5, rect.center().y - galley.size().y * 0.5);
+    ui.painter().galley(pos, galley, fg);
+}
+
+/// Wrapping chip rows must not inherit the ScrollArea's leftover height (that leaves a
+/// huge gap and pushes the Send card off screen). Pills themselves never wrap. Two 20px
+/// rows (44px) is enough at a narrow dock; extra space on a wide panel is only ~12px.
+fn wrap_chips(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    let w = ui.available_width().max(1.0);
+    let h = 44.0;
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, h), Sense::hover());
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(Layout::left_to_right(Align::Min).with_main_wrap(true)));
+    child.set_clip_rect(rect.intersect(ui.clip_rect()));
+    child.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
+    add(&mut child);
+}
+
+fn table_cell(ui: &mut egui::Ui, row: Rect, x: f32, w: f32, layout: Layout, add: impl FnOnce(&mut egui::Ui)) {
+    let cell = Rect::from_min_size(pos2(row.min.x + x, row.min.y), Vec2::new(w, row.height()));
+    let inner = cell.shrink2(Vec2::new(4.0, 1.0));
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(layout));
+    child.set_clip_rect(cell.intersect(ui.clip_rect()));
+    child.spacing_mut().item_spacing = Vec2::new(4.0, 1.0);
+    add(&mut child);
+}
+
+fn primary_btn(app: &mut EffectcraftApp, ui: &mut egui::Ui, id: &str, label: &str) -> bool {
+    let r = ui.add(egui::Button::new(RichText::new(label).color(Color32::WHITE).strong()).fill(BLUE).min_size(Vec2::new(168.0, 28.0)));
+    app.auto.add(id, r.rect, label);
+    r.clicked()
+}
+
+fn secondary_btn(app: &mut EffectcraftApp, ui: &mut egui::Ui, id: &str, label: &str) -> bool {
+    let r = ui.add(
+        egui::Button::new(RichText::new(label).color(Color32::from_rgb(0xbc, 0xd9, 0xff)))
+            .stroke(Stroke::new(1.0, BLUE))
+            .fill(Color32::from_rgb(0x14, 0x1c, 0x28)),
+    );
+    app.auto.add(id, r.rect, label);
+    r.clicked()
 }
 
 fn paint_banner(app: &mut EffectcraftApp, ui: &mut egui::Ui, alerts: &[PanelAlert]) {
@@ -76,10 +127,10 @@ fn paint_banner(app: &mut EffectcraftApp, ui: &mut egui::Ui, alerts: &[PanelAler
     let errors = alerts.iter().any(|a| a.level == AlertLevel::Error);
     let level = if errors { AlertLevel::Error } else { AlertLevel::Warning };
     let n = alerts.len();
-    let inner = egui::Frame::new().fill(fill_for(level)).stroke(stroke_for(app, level)).inner_margin(8.0).show(ui, |ui| {
+    let inner = egui::Frame::new().fill(fill_for(level)).stroke(stroke_for(app, level)).inner_margin(8.0).corner_radius(6.0).show(ui, |ui| {
         ui.colored_label(fg_for(level), RichText::new(format!("Look out — {n} issue{} in this job", if n == 1 { "" } else { "s" })).strong());
         for a in alerts.iter().take(6) {
-            ui.colored_label(fg_for(a.level), format!("{} — {}: {}", a.title, a.row, a.message));
+            ui.colored_label(fg_for(a.level), format!("• {} ({})", a.title, a.row));
         }
     });
     app.auto.add("screenSuite.alert.banner", inner.response.rect, "Look out");
@@ -87,14 +138,28 @@ fn paint_banner(app: &mut EffectcraftApp, ui: &mut egui::Ui, alerts: &[PanelAler
     ui.add_space(4.0);
 }
 
-fn paint_alert_row(app: &mut EffectcraftApp, ui: &mut egui::Ui, alert: &PanelAlert, extra: &str) {
-    let inner = egui::Frame::new().fill(fill_for(alert.level)).stroke(stroke_for(app, alert.level)).inner_margin(6.0).show(ui, |ui| {
-        ui.colored_label(fg_for(alert.level), RichText::new(extra).strong());
-        if extra != alert.message {
-            ui.colored_label(fg_for(alert.level), &alert.message);
-        }
-    });
+fn paint_issue_card(app: &mut EffectcraftApp, ui: &mut egui::Ui, alert: &PanelAlert, fix: Option<(&str, &str)>) {
+    let inner = egui::Frame::new()
+        .fill(fill_for(alert.level))
+        .stroke(stroke_for(app, alert.level))
+        .inner_margin(egui::Margin::symmetric(10, 8))
+        .corner_radius(8.0)
+        .show(ui, |ui| {
+            ui.set_max_width(ui.available_width().min(520.0));
+            ui.colored_label(fg_for(alert.level), RichText::new(&alert.title).strong().size(13.0));
+            ui.colored_label(fg_for(alert.level), RichText::new(plain_alert_message(&alert.message)).size(12.0));
+            if let Some((id, label)) = fix
+                && auto_btn(app, ui, id, label)
+            {
+                exec(app, "screen.suite.tab", json!({"tab": "build"}));
+            }
+        });
     app.auto.add(&format!("screenSuite.alert.row.{}", alert.id), inner.response.rect, &alert.row);
+}
+
+fn paint_alert_row(app: &mut EffectcraftApp, ui: &mut egui::Ui, alert: &PanelAlert, extra: &str) {
+    let _ = extra;
+    paint_issue_card(app, ui, alert, None);
 }
 
 fn alert_for<'a>(alerts: &'a [PanelAlert], tab: &str, name: &str) -> Option<&'a PanelAlert> {
@@ -102,6 +167,28 @@ fn alert_for<'a>(alerts: &'a [PanelAlert], tab: &str, name: &str) -> Option<&'a 
     alerts
         .iter()
         .find(|a| a.tab == tab && (a.row.eq_ignore_ascii_case(name) || a.row.to_ascii_lowercase().contains(&n) || n.contains(&a.row.to_ascii_lowercase())))
+}
+
+fn plain_alert_message(msg: &str) -> String {
+    let t = msg.trim();
+    t.strip_prefix("Look out — ").unwrap_or(t).trim().to_string()
+}
+
+fn unique_matcher_problems(alerts: &[PanelAlert]) -> Vec<&PanelAlert> {
+    let mut out = Vec::new();
+    for a in alerts {
+        if a.tab != "qc" && a.kind != "extraStack" {
+            continue;
+        }
+        let same = out.iter().any(|b: &&PanelAlert| {
+            b.row.eq_ignore_ascii_case(&a.row)
+                && (b.kind == a.kind || matches!((b.kind.as_str(), a.kind.as_str()), ("extraStack", "sizeMismatch") | ("sizeMismatch", "extraStack")))
+        });
+        if !same {
+            out.push(a);
+        }
+    }
+    out
 }
 
 fn heading(ui: &mut egui::Ui, title: &str, sub: &str) {
@@ -169,18 +256,20 @@ fn paint_rail(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect, alerts: &
     let cur = app.session.state.screen.tab.clone();
     let ready = sorted_ready(app);
     let locked = !ready;
-    for (id, label, auto, shortcut) in TOOLS {
+    for (id, label, auto, shortcut, icon) in TOOLS {
         let on = cur == id;
         let n = tab_alert_count(alerts, id);
         let updated = app.session.state.screen.updated_tabs.iter().any(|t| t == id);
         let tool_locked = locked && matches!(id, "build" | "adapter" | "sizeMaster" | "qc");
         let fill = if on { Color32::from_rgb(0x2f, 0x6f, 0xd6) } else { Color32::TRANSPARENT };
         let fg = if on { Color32::WHITE } else { Color32::from_gray(189) };
-        let r = egui::Frame::new().fill(fill).corner_radius(CornerRadius::same(6)).inner_margin(egui::Margin::symmetric(2, 7)).show(&mut ui, |ui| {
+        let r = egui::Frame::new().fill(fill).corner_radius(CornerRadius::same(6)).inner_margin(egui::Margin::symmetric(2, 6)).show(&mut ui, |ui| {
             ui.set_min_width(72.0);
             ui.vertical_centered(|ui| {
-                ui.label(RichText::new(label).size(10.5).color(fg));
-                ui.label(RichText::new(if tool_locked { "🔒" } else { shortcut }).size(9.5).color(fg.gamma_multiply(0.7)));
+                let ir = ui.allocate_exact_size(Vec2::splat(18.0), Sense::hover()).0;
+                icons::paint(ui.painter(), ir, icon, fg);
+                ui.label(RichText::new(label).size(10.0).color(fg));
+                ui.label(RichText::new(if tool_locked { "locked" } else { shortcut }).size(9.0).color(fg.gamma_multiply(0.7)));
             });
         });
         app.auto.add(auto, r.response.rect, label);
@@ -191,12 +280,12 @@ fn paint_rail(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect, alerts: &
             } else {
                 Color32::from_rgb(0xf5, 0x9e, 0x0b)
             };
-            let br = Rect::from_center_size(r.response.rect.right_top() + Vec2::new(-10.0, 8.0), Vec2::splat(16.0));
-            ui.painter().circle_filled(br.center(), 8.0, badge);
-            ui.painter().text(br.center(), egui::Align2::CENTER_CENTER, n.to_string(), egui::FontId::proportional(10.0), Color32::WHITE);
+            let br = Rect::from_center_size(r.response.rect.right_top() + Vec2::new(-7.0, 7.0), Vec2::splat(12.0));
+            ui.painter().circle_filled(br.center(), 6.0, badge);
+            ui.painter().text(br.center(), egui::Align2::CENTER_CENTER, n.to_string(), egui::FontId::proportional(8.5), Color32::WHITE);
         } else if updated {
-            let br = Rect::from_center_size(r.response.rect.right_top() + Vec2::new(-10.0, 8.0), Vec2::splat(16.0));
-            ui.painter().circle_filled(br.center(), 8.0, Color32::from_rgb(0x2f, 0x80, 0xed));
+            let br = Rect::from_center_size(r.response.rect.right_top() + Vec2::new(-7.0, 7.0), Vec2::splat(8.0));
+            ui.painter().circle_filled(br.center(), 4.0, Color32::from_rgb(0x2f, 0x80, 0xed));
         }
         if r.response.clicked() && !tool_locked {
             exec(app, "screen.suite.tab", json!({"tab": id}));
@@ -208,15 +297,35 @@ fn paint_rail(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect, alerts: &
 fn sorter_tab(app: &mut EffectcraftApp, ui: &mut egui::Ui, alerts: &[PanelAlert]) {
     let hits = app.session.state.screen.sorter.hits.len();
     heading(ui, "Size Sorter", if hits == 0 { "Paste-to-size sorter" } else { "Result" });
-    ui.label(RichText::new("Paste screen names or pixel sizes, one per line, in any order.").small().color(Color32::from_gray(140)));
-    let mut paste = app.session.state.screen.paste.clone();
-    let r = ui.add(egui::TextEdit::multiline(&mut paste).desired_width(f32::INFINITY).desired_rows(8).hint_text("1. Jahra Prime\n2. Al Salam Sync"));
-    app.auto.add("screenSuite.paste", r.rect, "paste");
-    if r.changed() {
-        app.session.state.screen.paste = paste;
+    let paste_open = hits == 0 || ui.memory(|m| m.data.get_temp::<bool>(egui::Id::new("screenSuite.pasteOpen")).unwrap_or(false));
+    if hits == 0 {
+        ui.label(RichText::new("Paste screen names or pixel sizes, one per line, in any order.").small().color(Color32::from_gray(140)));
+    } else {
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(format!("{} lines pasted", app.session.state.screen.paste.lines().filter(|l| !l.trim().is_empty()).count())).small().color(MUTED),
+            );
+            let r = ui.selectable_label(paste_open, if paste_open { "Hide paste" } else { "Edit paste" });
+            app.auto.add("screenSuite.paste.toggle", r.rect, "edit paste");
+            if r.clicked() {
+                ui.memory_mut(|m| m.data.insert_temp(egui::Id::new("screenSuite.pasteOpen"), !paste_open));
+            }
+        });
     }
-    if r.lost_focus() && sorted_ready(app) {
-        exec(app, "screen.sorter.sort", sort_body(app));
+    if paste_open {
+        let mut paste = app.session.state.screen.paste.clone();
+        let paste_rows = if hits == 0 { 8 } else { 4 };
+        let r =
+            ui.add(egui::TextEdit::multiline(&mut paste).desired_width(f32::INFINITY).desired_rows(paste_rows).hint_text("1. Jahra Prime\n2. Al Salam Sync"));
+        app.auto.add("screenSuite.paste", r.rect, "paste");
+        if r.changed() {
+            app.session.state.screen.paste = paste;
+        }
+        if r.lost_focus() && sorted_ready(app) {
+            exec(app, "screen.sorter.sort", sort_body(app));
+        }
+    } else {
+        app.auto.add("screenSuite.paste", ui.min_rect(), "paste");
     }
     ui.add_space(4.0);
     filters_block(app, ui);
@@ -234,8 +343,11 @@ fn sorter_tab(app: &mut EffectcraftApp, ui: &mut egui::Ui, alerts: &[PanelAlert]
         return;
     }
     let sorter = app.session.state.screen.sorter.clone();
-    ui.horizontal_wrapped(|ui| {
-        pill(ui, &format!("Pasted {}", sorter.hits.len()), Color32::from_rgb(0x33, 0x33, 0x33), Color32::from_gray(200));
+    let associated = sorter.hits.iter().filter(|h| h.reason.contains("Associated")).count();
+    let dups = sorter.flags.iter().filter(|f| f.kind == "duplicate").count();
+    let review = sorter.flags.iter().filter(|f| f.kind == "lowConfidence" || f.kind == "ambiguous" || f.kind == "unmatched").count();
+    wrap_chips(ui, |ui| {
+        pill(ui, &format!("Pasted {}", sorter.hits.len()), Color32::from_rgb(0x33, 0x33, 0x33), Color32::from_gray(210));
         pill(
             ui,
             &format!("Matched {}", sorter.hits.len().saturating_sub(sorter.unmatched.len())),
@@ -243,88 +355,83 @@ fn sorter_tab(app: &mut EffectcraftApp, ui: &mut egui::Ui, alerts: &[PanelAlert]
             Color32::from_rgb(0x5f, 0xd5, 0x85),
         );
         pill(ui, &format!("Unique sizes {}", sorter.rows.len()), Color32::from_rgb(0x16, 0x30, 0x4f), Color32::from_rgb(0x79, 0xb4, 0xff));
-        let hidden = hidden_row_count(&sorter);
-        if hidden > 0 {
-            pill(ui, &format!("{hidden} hidden"), Color32::from_rgb(0x16, 0x30, 0x4f), Color32::from_rgb(0x79, 0xb4, 0xff));
+        pill(ui, &format!("Associated {associated}"), Color32::from_rgb(0x2a, 0x21, 0x3a), Color32::from_rgb(0xc4, 0xb5, 0xfd));
+        pill(ui, &format!("Duplicates {dups}"), Color32::from_rgb(0x3a, 0x27, 0x12), Color32::from_rgb(0xfd, 0xba, 0x74));
+        if review > 0 {
+            pill(ui, &format!("Need review {review}"), Color32::from_rgb(0x3a, 0x2a, 0x10), Color32::from_rgb(0xf5, 0xd0, 0x76));
+        }
+        if !sorter.unmatched.is_empty() {
+            pill(ui, &format!("Unmatched {}", sorter.unmatched.len()), Color32::from_rgb(0x4a, 0x1b, 0x18), Color32::from_rgb(0xff, 0x7b, 0x72));
         }
     });
     ui.add_space(4.0);
+    ui.label(
+        RichText::new("By size groups: screens that share a production size fold into one entry (1.7HD, 2.6). Al Salam Sync and Marina keep their combined deliverable. Screen specific keeps every screen separate.")
+            .small()
+            .color(MUTED),
+    );
     ui.horizontal(|ui| {
-        ui.label(RichText::new("No.").small().color(Color32::from_gray(140)));
-        ui.add_space(12.0);
-        ui.label(RichText::new("Entry · size").small().color(Color32::from_gray(140)));
-        ui.add_space(80.0);
-        ui.label(RichText::new("Pasted screens").small().color(Color32::from_gray(140)));
-        ui.add_space(80.0);
-        ui.label(RichText::new("Covers").small().color(Color32::from_gray(140)));
+        ui.label(RichText::new("Flags").small().color(MUTED));
+        let fuzzy = sorter.hits.iter().any(|h| h.reason.contains("fuzzy") || h.score < 0.99);
+        let group = associated > 0;
+        let alias = sorter.hits.iter().any(|h| h.reason.contains("alias") || h.reason.contains("Alias"));
+        if fuzzy {
+            pill(ui, "FUZZY", Color32::from_rgb(0x3a, 0x2a, 0x10), Color32::from_rgb(0xf5, 0xd0, 0x76));
+        }
+        if group {
+            pill(ui, "GROUP", Color32::from_rgb(0x2a, 0x21, 0x3a), Color32::from_rgb(0xc4, 0xb5, 0xfd));
+        }
+        if alias {
+            pill(ui, "ALIAS", Color32::from_rgb(0x16, 0x30, 0x4f), Color32::from_rgb(0x79, 0xb4, 0xff));
+        }
+        if !fuzzy && !group && !alias {
+            ui.label(RichText::new("none").small().color(MUTED));
+        }
     });
-    let diff = app.session.state.screen.diff.clone();
-    let mut vis_i = 0usize;
-    for row in &sorter.rows {
-        if row.hidden {
-            continue;
-        }
-        vis_i = vis_i.saturating_add(1);
-        let added = diff.added.iter().any(|n| n == &row.use_name);
-        let line = format!("{}.  {}  {}   {}   · {} screens", vis_i, row.use_name, row.size, row.covers.join(" · "), row.count);
-        if let Some(a) = alert_for(alerts, "booking", &row.use_name) {
-            paint_alert_row(app, ui, a, &line);
-        } else if added {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(&line).color(Color32::from_rgb(0x5f, 0xd5, 0x85)));
-                pill(ui, "new", Color32::from_rgb(0x16, 0x3d, 0x24), Color32::from_rgb(0x5f, 0xd5, 0x85));
-            });
-        } else {
-            ui.label(&line);
-        }
-    }
-    for name in &diff.removed {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(name).strikethrough().color(Color32::from_rgb(0xff, 0x7b, 0x72)));
-            pill(ui, "deleted", Color32::from_rgb(0x4a, 0x1b, 0x18), Color32::from_rgb(0xff, 0x7b, 0x72));
-        });
-    }
+    ui.add_space(6.0);
+    paint_sorter_table(app, ui, alerts, &sorter);
     let hidden = hidden_row_count(&sorter);
     if hidden > 0 {
         ui.label(
-            RichText::new(format!("{hidden} row{} hidden by filters · still sent · Show", if hidden == 1 { "" } else { "s" }))
+            RichText::new(format!("{hidden} row{} hidden by filters · still sent", if hidden == 1 { "" } else { "s" }))
                 .color(Color32::from_rgb(0x9c, 0xc4, 0xf5)),
         );
     }
-    ui.add_space(6.0);
-    egui::Frame::new().fill(Color32::from_rgb(0x14, 0x1c, 0x28)).stroke(Stroke::new(1.0, Color32::from_rgb(0x2f, 0x6f, 0xd6))).inner_margin(8.0).show(
-        ui,
-        |ui| {
-            ui.label(RichText::new("Send sorted names").strong());
-            ui.horizontal(|ui| {
-                ui.label("Send as");
-                let by = app.session.state.screen.job_mode == JobMode::BySize;
-                let n_size = sorter.paste_names_by_size.len();
-                let n_spec = sorter.paste_names_screen_specific.len();
-                let r = ui.selectable_label(by, format!("By size · {n_size} names"));
-                app.auto.add("screenSuite.sendBySizeToggle", r.rect, "By size");
-                if r.clicked() {
-                    app.session.state.screen.job_mode = JobMode::BySize;
-                }
-                let r = ui.selectable_label(!by, format!("Screen specific · {n_spec} names"));
-                app.auto.add("screenSuite.sendScreenSpecific", r.rect, "Screen specific");
-                if r.clicked() {
-                    app.session.state.screen.job_mode = JobMode::ScreenSpecific;
-                }
+    ui.add_space(8.0);
+    egui::Frame::new().fill(Color32::from_rgb(0x14, 0x1c, 0x28)).stroke(Stroke::new(1.0, BLUE)).inner_margin(10.0).corner_radius(8.0).show(ui, |ui| {
+        ui.label(RichText::new("Send sorted names").strong().size(14.0));
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Send as").small().color(MUTED));
+            let by = app.session.state.screen.job_mode == JobMode::BySize;
+            let n_size = sorter.paste_names_by_size.len();
+            let n_spec = sorter.paste_names_screen_specific.len();
+            egui::Frame::new().fill(Color32::from_rgb(0x1c, 0x24, 0x32)).corner_radius(6.0).inner_margin(2.0).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let r = ui.selectable_label(by, format!("By size · {n_size}"));
+                    app.auto.add("screenSuite.sendBySizeToggle", r.rect, "By size");
+                    if r.clicked() {
+                        app.session.state.screen.job_mode = JobMode::BySize;
+                    }
+                    let r = ui.selectable_label(!by, format!("Screen specific · {n_spec}"));
+                    app.auto.add("screenSuite.sendScreenSpecific", r.rect, "Screen specific");
+                    if r.clicked() {
+                        app.session.state.screen.job_mode = JobMode::ScreenSpecific;
+                    }
+                });
             });
-            let specific = app.session.state.screen.job_mode == JobMode::ScreenSpecific;
-            let n = if specific { sorter.paste_names_screen_specific.len() } else { sorter.paste_names_by_size.len() };
-            ui.label(RichText::new(format!("Sends all {n} sizes, including {hidden} hidden by filters.")).color(Color32::from_rgb(0xbc, 0xd9, 0xff)));
-            ui.horizontal(|ui| {
-                if auto_btn(app, ui, "screenSuite.sendBySize", "Send to Screen Manager →") {
-                    exec(app, "screen.sorter.send", json!({"screenSpecific": specific, "to": "manager"}));
-                }
-                if auto_btn(app, ui, "screenSuite.sendToMatcher", "Send to Size Matcher →") {
-                    exec(app, "screen.sorter.send", json!({"screenSpecific": specific, "to": "matcher"}));
-                }
-            });
-        },
-    );
+        });
+        let specific = app.session.state.screen.job_mode == JobMode::ScreenSpecific;
+        let n = if specific { sorter.paste_names_screen_specific.len() } else { sorter.paste_names_by_size.len() };
+        ui.label(RichText::new(format!("Sends all {n} sizes, including {hidden} hidden by filters.")).color(Color32::from_rgb(0xbc, 0xd9, 0xff)));
+        ui.horizontal(|ui| {
+            if primary_btn(app, ui, "screenSuite.sendBySize", "Send to Screen Manager →") {
+                exec(app, "screen.sorter.send", json!({"screenSpecific": specific, "to": "manager"}));
+            }
+            if secondary_btn(app, ui, "screenSuite.sendToMatcher", "Send to Size Matcher →") {
+                exec(app, "screen.sorter.send", json!({"screenSpecific": specific, "to": "matcher"}));
+            }
+        });
+    });
     for o in app.session.state.screen.orphans.clone() {
         if o.keep == Some(true) {
             continue;
@@ -347,6 +454,96 @@ fn sorter_tab(app: &mut EffectcraftApp, ui: &mut egui::Ui, alerts: &[PanelAlert]
     }
 }
 
+fn paint_sorter_table(app: &mut EffectcraftApp, ui: &mut egui::Ui, alerts: &[PanelAlert], sorter: &effectcraft_screens::SorterResult) {
+    let avail = ui.available_width().max(280.0);
+    let w_no = 28.0;
+    let w_entry = 132.0;
+    let w_covers = 88.0;
+    let w_pasted = (avail - w_no - w_entry - w_covers).max(64.0);
+    let xs = [0.0, w_no, w_no + w_entry, w_no + w_entry + w_pasted];
+    let ws = [w_no, w_entry, w_pasted, w_covers];
+    let (hdr, _) = ui.allocate_exact_size(Vec2::new(avail, 18.0), Sense::hover());
+    for (i, title) in ["No.", "Entry · size", "Pasted screens", "Covers"].iter().enumerate() {
+        table_cell(ui, hdr, xs[i], ws[i], Layout::left_to_right(Align::Center), |ui| {
+            ui.label(RichText::new(*title).small().strong().color(MUTED));
+        });
+    }
+    ui.add(egui::Separator::default().spacing(2.0));
+    let diff = app.session.state.screen.diff.clone();
+    let sel_id = egui::Id::new("screenSuite.sorter.sel");
+    let mut selected = ui.memory(|m| m.data.get_temp::<usize>(sel_id)).unwrap_or(0);
+    let mut vis_i = 0usize;
+    for row in &sorter.rows {
+        if row.hidden {
+            continue;
+        }
+        vis_i = vis_i.saturating_add(1);
+        let added = diff.added.iter().any(|n| n == &row.use_name);
+        let alert = alert_for(alerts, "booking", &row.use_name);
+        let row_h = 36.0;
+        let (rect, resp) = ui.allocate_exact_size(Vec2::new(avail, row_h), Sense::click());
+        if resp.clicked() {
+            selected = vis_i;
+        }
+        let fill = if let Some(a) = alert {
+            fill_for(a.level)
+        } else if selected == vis_i {
+            ROW_SEL
+        } else if resp.hovered() {
+            ROW_HOVER
+        } else {
+            Color32::TRANSPARENT
+        };
+        ui.painter().rect_filled(rect, 4.0, fill);
+        table_cell(ui, rect, xs[0], ws[0], Layout::left_to_right(Align::Center), |ui| {
+            ui.label(RichText::new(format!("{vis_i}")).small().color(MUTED));
+        });
+        table_cell(ui, rect, xs[1], ws[1], Layout::top_down(Align::Min), |ui| {
+            ui.add(
+                egui::Label::new(RichText::new(&row.use_name).strong().color(if added {
+                    Color32::from_rgb(0x5f, 0xd5, 0x85)
+                } else {
+                    Color32::from_gray(230)
+                }))
+                .truncate()
+                .selectable(false),
+            );
+            ui.add(egui::Label::new(RichText::new(row_size_text(row)).small().color(MUTED)).truncate().selectable(false));
+        });
+        table_cell(ui, rect, xs[2], ws[2], Layout::top_down(Align::Min), |ui| {
+            let extra = row.covers.len().saturating_sub(1);
+            let shown = if extra == 0 {
+                row.covers.first().cloned().unwrap_or_default()
+            } else {
+                format!("{} +{extra} more", row.covers.first().cloned().unwrap_or_default())
+            };
+            let tip = row.covers.join("\n");
+            ui.add(egui::Label::new(RichText::new(shown).small().color(Color32::from_gray(200))).truncate().selectable(false)).on_hover_text(&tip);
+            if !row.library_hint.is_empty() {
+                ui.add(egui::Label::new(RichText::new(&row.library_hint).small().color(MUTED)).truncate().selectable(false));
+            }
+        });
+        table_cell(ui, rect, xs[3], ws[3], Layout::left_to_right(Align::Center), |ui| {
+            let label = if row.covers_label.is_empty() { effectcraft_screens::screens_pill(row.count) } else { row.covers_label.clone() };
+            pill(ui, &label, Color32::from_rgb(0x16, 0x30, 0x4f), Color32::from_rgb(0x9c, 0xc4, 0xf5));
+            if added {
+                pill(ui, "new", Color32::from_rgb(0x16, 0x3d, 0x24), Color32::from_rgb(0x5f, 0xd5, 0x85));
+            }
+        });
+        app.auto.add(&format!("screenSuite.sorter.row.{vis_i}"), rect, &row.use_name);
+        if let Some(a) = alert {
+            app.auto.add(&format!("screenSuite.alert.row.{}", a.id), rect, &a.row);
+        }
+    }
+    ui.memory_mut(|m| m.data.insert_temp(sel_id, selected));
+    for name in &diff.removed {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(name).strikethrough().color(Color32::from_rgb(0xff, 0x7b, 0x72)));
+            pill(ui, "deleted", Color32::from_rgb(0x4a, 0x1b, 0x18), Color32::from_rgb(0xff, 0x7b, 0x72));
+        });
+    }
+}
+
 fn sort_body(app: &EffectcraftApp) -> Value {
     let st = &app.session.state.screen;
     json!({
@@ -364,11 +561,19 @@ fn sort_body(app: &EffectcraftApp) -> Value {
 
 fn filters_block(app: &mut EffectcraftApp, ui: &mut egui::Ui) {
     let mut open = app.session.state.screen.filters_open;
-    let active = usize::from(!app.session.state.screen.filters.kind.is_empty())
-        + usize::from(!app.session.state.screen.filters.group.is_empty())
-        + usize::from(app.session.state.screen.cleanup)
-        + usize::from(app.session.state.screen.match_mode == MatchMode::Flexible);
-    ui.horizontal(|ui| {
+    let flexible = app.session.state.screen.match_mode == MatchMode::Flexible;
+    let cleanup = app.session.state.screen.cleanup;
+    let kind = app.session.state.screen.filters.kind.clone();
+    let group = app.session.state.screen.filters.group.clone();
+    let gov = app.session.state.screen.filters.governorate.clone();
+    let cat = app.session.state.screen.filters.category.clone();
+    let active = usize::from(!kind.is_empty())
+        + usize::from(!group.is_empty())
+        + usize::from(!gov.is_empty())
+        + usize::from(!cat.is_empty())
+        + usize::from(cleanup)
+        + usize::from(flexible);
+    wrap_chips(ui, |ui| {
         let r = ui.selectable_label(open, if open { "▾ Filters" } else { "▸ Filters" });
         app.auto.add("screenSuite.filters.toggle", r.rect, "Filters");
         if r.clicked() {
@@ -376,6 +581,26 @@ fn filters_block(app: &mut EffectcraftApp, ui: &mut egui::Ui) {
             app.session.state.screen.filters_open = open;
         }
         pill(ui, &format!("{active} active"), Color32::from_rgb(0x16, 0x30, 0x4f), Color32::from_rgb(0x79, 0xb4, 0xff));
+        if flexible {
+            pill(ui, "Flexible", Color32::from_rgb(0x16, 0x30, 0x4f), Color32::from_rgb(0x79, 0xb4, 0xff));
+        } else {
+            pill(ui, "Strict", Color32::from_rgb(0x3a, 0x2a, 0x10), Color32::from_rgb(0xf5, 0xd0, 0x76));
+        }
+        if cleanup {
+            pill(ui, "clean bullets", Color32::from_rgb(0x24, 0x24, 0x24), Color32::from_gray(200));
+        }
+        if !kind.is_empty() {
+            pill(ui, &format!("Type: {}", kind.to_ascii_lowercase()), Color32::from_rgb(0x16, 0x3d, 0x24), Color32::from_rgb(0x5f, 0xd5, 0x85));
+        }
+        if !group.is_empty() {
+            pill(ui, &format!("Group: {group}"), Color32::from_rgb(0x2a, 0x21, 0x3a), Color32::from_rgb(0xc4, 0xb5, 0xfd));
+        }
+        if !gov.is_empty() {
+            pill(ui, &format!("Governorate: {gov}"), Color32::from_rgb(0x16, 0x30, 0x4f), Color32::from_rgb(0x79, 0xb4, 0xff));
+        }
+        if !cat.is_empty() {
+            pill(ui, &format!("Category: {cat}"), Color32::from_rgb(0x16, 0x30, 0x4f), Color32::from_rgb(0x79, 0xb4, 0xff));
+        }
     });
     if !open && !sorted_ready(app) {
         // Keep the first-run filters visible so the panel matches step 1.
@@ -481,15 +706,42 @@ fn manager_tab(app: &mut EffectcraftApp, ui: &mut egui::Ui, alerts: &[PanelAlert
         );
     }
     let m = app.session.state.screen.manager.clone();
+    let avail = ui.available_width().max(280.0);
+    let w_asked = 150.0;
+    let w_size = 88.0;
+    ui.horizontal(|ui| {
+        ui.allocate_ui_with_layout(Vec2::new(w_asked, 16.0), Layout::left_to_right(Align::Center), |ui| {
+            ui.label(RichText::new("Material / screen").small().strong().color(MUTED));
+        });
+        ui.allocate_ui_with_layout(Vec2::new(w_size, 16.0), Layout::left_to_right(Align::Center), |ui| {
+            ui.label(RichText::new("Size").small().strong().color(MUTED));
+        });
+        ui.label(RichText::new("New name").small().strong().color(MUTED));
+    });
+    ui.add(egui::Separator::default().spacing(4.0));
+    let pfx = app.session.state.screen.prefix.clone();
+    let sfx = app.session.state.screen.suffix.split(',').next().unwrap_or("").trim().to_string();
+    let name_from = app.session.state.screen.name_from;
     for row in &m.matches {
         if m.show_selected_only && row.status != "ok" && row.status != "sizeMismatch" && row.status != "missing" {
             // still show problems
         }
-        let line = format!("{}  {}×{}  [{}]  {}", row.asked, row.width, row.height, row.status, row.detail);
-        if let Some(a) = alert_for(alerts, "build", &row.asked) {
-            paint_alert_row(app, ui, a, &line);
-        } else {
-            ui.label(line);
+        let preview = effectcraft_screens::compose_comp_name(name_from, &row.asked, Some(&row.asked), &pfx, &sfx);
+        let alert = alert_for(alerts, "build", &row.asked);
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(avail, 24.0), Sense::hover());
+        if let Some(a) = alert {
+            ui.painter().rect_filled(rect, 4.0, fill_for(a.level));
+        }
+        let mut row_ui = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(Vec2::new(4.0, 1.0))).layout(Layout::left_to_right(Align::Center)));
+        row_ui.allocate_ui_with_layout(Vec2::new(w_asked, 22.0), Layout::left_to_right(Align::Center), |ui| {
+            ui.label(RichText::new(&row.asked).strong().size(12.0));
+        });
+        row_ui.allocate_ui_with_layout(Vec2::new(w_size, 22.0), Layout::left_to_right(Align::Center), |ui| {
+            ui.label(RichText::new(format!("{}×{}", row.width, row.height)).small().color(MUTED));
+        });
+        row_ui.label(RichText::new(preview).small().color(Color32::from_gray(210)));
+        if let Some(a) = alert {
+            app.auto.add(&format!("screenSuite.alert.row.{}", a.id), rect, &a.row);
         }
     }
     let missing = m.matches.iter().filter(|r| r.status != "ok").count();
@@ -525,40 +777,53 @@ fn manager_tab(app: &mut EffectcraftApp, ui: &mut egui::Ui, alerts: &[PanelAlert
 }
 
 fn naming_block(app: &mut EffectcraftApp, ui: &mut egui::Ui) {
-    egui::Frame::new().fill(Color32::from_rgb(0x1c, 0x1c, 0x1c)).stroke(Stroke::new(1.0, Color32::from_rgb(0x33, 0x33, 0x33))).inner_margin(8.0).show(
-        ui,
-        |ui| {
-            ui.horizontal(|ui| {
-                ui.label("Comp names from");
-                let mat = app.session.state.screen.name_from == CompNameFrom::Material;
-                if ui.selectable_label(mat, "Material file").clicked() {
-                    exec(app, "screen.suite.naming", json!({"nameFrom": "material"}));
-                }
-                if ui.selectable_label(!mat, "Prefix + screen").clicked() {
-                    exec(app, "screen.suite.naming", json!({"nameFrom": "prefixScreen"}));
-                }
-            });
-            ui.horizontal(|ui| {
-                ui.label("Prefix:");
-                let mut p = app.session.state.screen.prefix.clone();
-                let r = ui.add(egui::TextEdit::singleline(&mut p).desired_width(120.0).hint_text("SpringSale"));
-                app.auto.add("screenSuite.prefix", r.rect, "prefix");
-                if r.changed() {
-                    exec(app, "screen.suite.naming", json!({"prefix": p}));
-                }
-                ui.label("Suffix:");
-                let mut s = app.session.state.screen.suffix.clone();
-                let r = ui.add(egui::TextEdit::singleline(&mut s).desired_width(80.0).hint_text("EN, AR"));
-                app.auto.add("screenSuite.suffix", r.rect, "suffix");
-                if r.changed() {
-                    exec(app, "screen.suite.naming", json!({"suffix": s}));
-                }
-                ui.label("Duration:");
-                let mut d = app.session.state.screen.duration_s;
-                let r = ui.add(egui::DragValue::new(&mut d).speed(0.5).suffix(" s"));
-                if r.changed() {
-                    app.session.state.screen.duration_s = d;
-                }
+    egui::Frame::new()
+        .fill(Color32::from_rgb(0x1c, 0x1c, 0x1c))
+        .stroke(Stroke::new(1.0, Color32::from_rgb(0x33, 0x33, 0x33)))
+        .inner_margin(10.0)
+        .corner_radius(8.0)
+        .show(ui, |ui| {
+            ui.label(RichText::new("Comp names from").strong());
+            egui::Grid::new("screenSuite.naming.grid").num_columns(2).spacing([12.0, 8.0]).min_col_width(96.0).show(ui, |ui| {
+                ui.label(RichText::new("Source").small().color(MUTED));
+                ui.horizontal(|ui| {
+                    let mat = app.session.state.screen.name_from == CompNameFrom::Material;
+                    let r = ui.selectable_label(mat, "Material file");
+                    if r.clicked() {
+                        exec(app, "screen.suite.naming", json!({"nameFrom": "material"}));
+                    }
+                    let r = ui.selectable_label(!mat, "Prefix + screen");
+                    if r.clicked() {
+                        exec(app, "screen.suite.naming", json!({"nameFrom": "prefixScreen"}));
+                    }
+                });
+                ui.end_row();
+                ui.label(RichText::new("Prefix").small().color(MUTED));
+                ui.horizontal(|ui| {
+                    let mut p = app.session.state.screen.prefix.clone();
+                    let r = ui.add(egui::TextEdit::singleline(&mut p).desired_width(140.0).hint_text("SpringSale"));
+                    app.auto.add("screenSuite.prefix", r.rect, "prefix");
+                    if r.changed() {
+                        exec(app, "screen.suite.naming", json!({"prefix": p}));
+                    }
+                    ui.label(RichText::new("Suffix").small().color(MUTED));
+                    let mut s = app.session.state.screen.suffix.clone();
+                    let r = ui.add(egui::TextEdit::singleline(&mut s).desired_width(90.0).hint_text("EN, AR"));
+                    app.auto.add("screenSuite.suffix", r.rect, "suffix");
+                    if r.changed() {
+                        exec(app, "screen.suite.naming", json!({"suffix": s}));
+                    }
+                });
+                ui.end_row();
+                ui.label(RichText::new("Duration").small().color(MUTED));
+                ui.horizontal(|ui| {
+                    let mut d = app.session.state.screen.duration_s;
+                    let r = ui.add(egui::DragValue::new(&mut d).speed(0.5).suffix(" s"));
+                    if r.changed() {
+                        app.session.state.screen.duration_s = d;
+                    }
+                });
+                ui.end_row();
             });
             let preview = {
                 let pfx = app.session.state.screen.prefix.clone();
@@ -575,15 +840,15 @@ fn naming_block(app: &mut EffectcraftApp, ui: &mut egui::Ui) {
                 } else {
                     app.session.state.screen.manager.selected.first().cloned().unwrap_or_else(|| "1.7HD".into())
                 };
-                format!("Preview: {}", effectcraft_screens::compose_comp_name(app.session.state.screen.name_from, &core, Some(&core), &pfx, &sfx))
+                effectcraft_screens::compose_comp_name(app.session.state.screen.name_from, &core, Some(&core), &pfx, &sfx)
             };
-            ui.label(RichText::new(preview).small().color(Color32::from_rgb(0xf0, 0xd9, 0xa8)));
+            ui.add_space(4.0);
+            ui.label(RichText::new(format!("Preview: {preview}")).small().color(Color32::from_rgb(0xf0, 0xd9, 0xa8)));
             ui.label(
                 RichText::new("Original files are never renamed, not on disk and not in the Project panel.").small().color(Color32::from_rgb(0xcd, 0xee, 0xd6)),
             );
             app.auto.add("screenSuite.naming.lock", ui.min_rect(), "never rename footage");
-        },
-    );
+        });
 }
 
 fn naming_params(app: &EffectcraftApp) -> Value {
@@ -654,24 +919,71 @@ fn renamer_tab(app: &mut EffectcraftApp, ui: &mut egui::Ui) {
 fn matcher_tab(app: &mut EffectcraftApp, ui: &mut egui::Ui, alerts: &[PanelAlert]) {
     heading(ui, "Size Matcher", "Pre-render check");
     ui.horizontal(|ui| {
-        ui.label("Needs");
+        ui.label(RichText::new("Needs").small().color(MUTED));
         let by = app.session.state.screen.job_mode == JobMode::BySize;
         let _ = ui.selectable_label(by, format!("By size · {} sizes", app.session.state.screen.sorter.paste_names_by_size.len()));
         let _ = ui.selectable_label(!by, format!("Screen specific · {} screens", app.session.state.screen.sorter.paste_names_screen_specific.len()));
+        if auto_btn(app, ui, "screenSuite.matcher.check", "Check sizes") {
+            exec(app, "screen.matcher.check", json!({}));
+        }
     });
-    if auto_btn(app, ui, "screenSuite.matcher.check", "Check sizes") {
-        exec(app, "screen.matcher.check", json!({}));
-    }
     let report = app.session.state.screen.matcher.clone();
     let color = if report.pass { app.tokens.cache_green } else { app.tokens.danger };
     ui.colored_label(color, RichText::new(&report.summary).strong());
-    for row in &report.rows {
-        let line = format!("{}  {}  {}", row.screen, row.status, row.detail);
-        if let Some(a) = alert_for(alerts, "qc", &row.screen) {
-            paint_alert_row(app, ui, a, &line);
-        } else {
-            ui.label(line);
+    if !report.rows.is_empty() {
+        let avail = ui.available_width().max(280.0);
+        let w_name = 140.0;
+        let w_size = 110.0;
+        ui.horizontal(|ui| {
+            ui.allocate_ui_with_layout(Vec2::new(w_name, 16.0), Layout::left_to_right(Align::Center), |ui| {
+                ui.label(RichText::new("Needed").small().strong().color(MUTED));
+            });
+            ui.allocate_ui_with_layout(Vec2::new(w_size, 16.0), Layout::left_to_right(Align::Center), |ui| {
+                ui.label(RichText::new("Size").small().strong().color(MUTED));
+            });
+            ui.label(RichText::new("Check").small().strong().color(MUTED));
+        });
+        ui.add(egui::Separator::default().spacing(4.0));
+        for row in &report.rows {
+            let ok = row.status == "pass";
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(avail, 22.0), Sense::hover());
+            if !ok {
+                ui.painter().rect_filled(rect, 4.0, Color32::from_rgb(0x24, 0x18, 0x14));
+            }
+            let mut row_ui = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(Vec2::new(4.0, 1.0))).layout(Layout::left_to_right(Align::Center)));
+            row_ui.allocate_ui_with_layout(Vec2::new(w_name, 20.0), Layout::left_to_right(Align::Center), |ui| {
+                ui.label(RichText::new(&row.screen).strong().size(12.0));
+            });
+            row_ui.allocate_ui_with_layout(Vec2::new(w_size, 20.0), Layout::left_to_right(Align::Center), |ui| {
+                ui.label(RichText::new(&row.needs).small().color(MUTED));
+            });
+            if ok {
+                row_ui.colored_label(Color32::from_rgb(0x5f, 0xd5, 0x85), "✓");
+            } else {
+                row_ui.colored_label(Color32::from_rgb(0xff, 0x7b, 0x72), "✗");
+            }
         }
+    }
+    let problems = unique_matcher_problems(alerts);
+    if !problems.is_empty() {
+        ui.add_space(8.0);
+        egui::Frame::new()
+            .fill(Color32::from_rgb(0x22, 0x16, 0x14))
+            .stroke(Stroke::new(1.0, Color32::from_rgb(0x8a, 0x3a, 0x32)))
+            .inner_margin(10.0)
+            .corner_radius(8.0)
+            .show(ui, |ui| {
+                ui.label(
+                    RichText::new(format!("Not ready — {} problem{} to fix before rendering", problems.len(), if problems.len() == 1 { "" } else { "s" }))
+                        .strong()
+                        .color(Color32::from_rgb(0xff, 0xb4, 0xad)),
+                );
+                for a in problems {
+                    let fix =
+                        if a.kind == "missing" { Some(("screenSuite.matcher.fix.select", "Select it")) } else { Some(("screenSuite.matcher.fix", "Fix")) };
+                    paint_issue_card(app, ui, a, fix);
+                }
+            });
     }
     if !report.rows.is_empty() {
         ui.add_space(6.0);
@@ -696,21 +1008,24 @@ fn matcher_tab(app: &mut EffectcraftApp, ui: &mut egui::Ui, alerts: &[PanelAlert
         }
     });
     if app.session.state.screen.send_anyway_open && !report.pass {
-        egui::Frame::new().fill(Color32::from_rgb(0x2b, 0x15, 0x13)).stroke(Stroke::new(1.0, app.tokens.danger)).inner_margin(8.0).show(ui, |ui| {
-            ui.label(RichText::new("Send anyway? These checks are still failing:").strong());
-            for row in report.rows.iter().filter(|r| r.status != "pass") {
-                ui.label(format!("• {} — {}", row.screen, row.detail));
-            }
-            ui.horizontal(|ui| {
-                if ui.button("Cancel").clicked() {
-                    app.session.state.screen.send_anyway_open = false;
+        egui::Frame::new().fill(Color32::from_rgb(0x2b, 0x15, 0x13)).stroke(Stroke::new(1.0, app.tokens.danger)).inner_margin(8.0).corner_radius(8.0).show(
+            ui,
+            |ui| {
+                ui.label(RichText::new("Send anyway? These checks are still failing:").strong());
+                for row in report.rows.iter().filter(|r| r.status != "pass") {
+                    ui.label(format!("• {} — {}", row.screen, plain_alert_message(&row.detail)));
                 }
-                if auto_btn(app, ui, "screenSuite.sendAnywayConfirm", "Send anyway") {
-                    exec(app, "screen.matcher.send", json!({"anyway": true}));
-                    app.session.state.screen.send_anyway_open = false;
-                }
-            });
-        });
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        app.session.state.screen.send_anyway_open = false;
+                    }
+                    if auto_btn(app, ui, "screenSuite.sendAnywayConfirm", "Send anyway") {
+                        exec(app, "screen.matcher.send", json!({"anyway": true}));
+                        app.session.state.screen.send_anyway_open = false;
+                    }
+                });
+            },
+        );
     }
 }
 
@@ -725,8 +1040,28 @@ pub fn show_library(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         if auto_btn(app, ui, "screenLibrary.redo", "Redo") {
             exec(app, "screen.library.redo", json!({}));
         }
-        ui.label(RichText::new("Import JSON…").small().color(Color32::from_gray(140)));
-        ui.label(RichText::new("Export JSON…").small().color(Color32::from_gray(140)));
+        if auto_btn(app, ui, "screenLibrary.import", "Import JSON…") {
+            crate::panels::dialogs::form(
+                app,
+                "Import Screen Library",
+                "screen.library.import",
+                json!({}),
+                vec![
+                    Field::path("path", "JSON file", "", &["json"]),
+                    Field::text("json", "Or paste JSON", ""),
+                    Field::choice("mode", "Mode", &[("Merge", json!("merge")), ("Replace", json!("replace"))], 0),
+                ],
+            );
+        }
+        if auto_btn(app, ui, "screenLibrary.export", "Export JSON…") {
+            crate::panels::dialogs::form(
+                app,
+                "Export Screen Library",
+                "screen.library.save",
+                json!({}),
+                vec![Field::save_path("path", "Save as", "screen-library.json")],
+            );
+        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if auto_btn(app, ui, "screenLibrary.save", "Save · updates every tool") {
                 exec(app, "screen.library.save", json!({}));
@@ -748,14 +1083,15 @@ pub fn show_library(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         ui.label(format!("{} screens · one list for Screen Manager, SizeMaster and Screen Adapter", merged.len()));
         pill(ui, &format!("{} issues", issues.len()), Color32::from_rgb(0x4a, 0x1b, 0x18), Color32::from_rgb(0xff, 0x7b, 0x72));
     });
+    let groups_n = lib.get("groups").and_then(Value::as_array).map(Vec::len).unwrap_or(0);
     let body = ui.available_rect_before_wrap();
-    let side_w = 168.0;
+    let side_w = 176.0;
     let side = Rect::from_min_size(body.min, Vec2::new(side_w, body.height()));
     let main = Rect::from_min_max(egui::pos2(body.min.x + side_w + 8.0, body.min.y), body.max);
     let mut side_ui = ui.new_child(egui::UiBuilder::new().max_rect(side).layout(egui::Layout::top_down(egui::Align::Min)));
     side_ui.label(RichText::new("LIBRARY").small().color(Color32::from_gray(130)));
     for (id, label, count) in
-        [("screens", "Screens · all tools", merged.len() as u64), ("combiners", "Combiners", combiners_n), ("issues", "All issues", issues.len() as u64)]
+        [("screens", "Screens · all tools", merged.len() as u64), ("combiners", "Combiners", combiners_n), ("groups", "Groups · durations", groups_n as u64)]
     {
         let on = section == id;
         let r = side_ui.selectable_label(on, format!("{label}  {count}"));
@@ -766,10 +1102,26 @@ pub fn show_library(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     }
     side_ui.add_space(8.0);
     side_ui.label(RichText::new("CHECKS").small().color(Color32::from_gray(130)));
-    side_ui.label(format!("{} issues flagged as you type", issues.len()));
+    let r = side_ui.selectable_label(section == "issues", format!("All issues  {}", issues.len()));
+    if r.clicked() {
+        exec(app, "screen.library.edit", json!({"section": "issues"}));
+    }
+    app.auto.add("screenLibrary.nav.issues", r.rect, "All issues");
+    side_ui.label(RichText::new(format!("{} flagged as you type", issues.len())).small().color(MUTED));
     let mut main_ui = ui.new_child(egui::UiBuilder::new().max_rect(main).layout(egui::Layout::top_down(egui::Align::Min)));
     if section == "combiners" {
         combiners_editor(app, &mut main_ui, &lib);
+        return;
+    }
+    if section == "groups" {
+        main_ui.label(RichText::new("Groups · durations").strong());
+        if let Some(groups) = lib.get("groups").and_then(Value::as_array) {
+            for g in groups {
+                if let Some(name) = g.as_str() {
+                    main_ui.label(name);
+                }
+            }
+        }
         return;
     }
     main_ui.horizontal(|ui| {
@@ -786,52 +1138,117 @@ pub fn show_library(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         {
             exec(app, "screen.library.edit", json!({"delete": name}));
         }
+        let mut q = ui.memory(|m| m.data.get_temp::<String>(egui::Id::new("screenLibrary.search")).unwrap_or_default());
+        let r = ui.add(egui::TextEdit::singleline(&mut q).desired_width(140.0).hint_text("Search"));
+        app.auto.add("screenLibrary.search", r.rect, "search");
+        ui.memory_mut(|m| m.data.insert_temp(egui::Id::new("screenLibrary.search"), q));
         ui.label(RichText::new("Nothing is added to the library unless you type it here.").small().color(Color32::from_gray(140)));
     });
-    let table = egui::ScrollArea::vertical().id_salt("screenLibrary.table").auto_shrink([false, false]).show(&mut main_ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Name").strong().small());
-            ui.add_space(140.0);
-            ui.label(RichText::new("Width").strong().small());
-            ui.label(RichText::new("Height").strong().small());
-            ui.label(RichText::new("Group").strong().small());
-            ui.label(RichText::new("Also in").strong().small());
-            ui.label(RichText::new("Check").strong().small());
+    let search = main_ui.memory(|m| m.data.get_temp::<String>(egui::Id::new("screenLibrary.search")).unwrap_or_default());
+    let search_n = effectcraft_screens::normalize(&search);
+    paint_library_table(app, &mut main_ui, &merged, &issues, section == "issues", &search_n);
+}
+
+fn paint_library_table(app: &mut EffectcraftApp, ui: &mut egui::Ui, merged: &[Value], issues: &[Value], issues_only: bool, search: &str) {
+    let avail = ui.available_width().max(520.0);
+    let w_name = 200.0;
+    let w_w = 72.0;
+    let w_h = 72.0;
+    let w_group = 100.0;
+    let w_also = 118.0;
+    let w_check = (avail - w_name - w_w - w_h - w_group - w_also).max(160.0);
+    let xs = [0.0, w_name, w_name + w_w, w_name + w_w + w_h, w_name + w_w + w_h + w_group, w_name + w_w + w_h + w_group + w_also];
+    let ws = [w_name, w_w, w_h, w_group, w_also, w_check];
+    let (hdr, _) = ui.allocate_exact_size(Vec2::new(avail, 22.0), Sense::hover());
+    ui.painter().rect_filled(hdr, 0.0, Color32::from_rgb(0x18, 0x18, 0x18));
+    for (i, title) in ["Name", "Width", "Height", "Group", "Also in", "Check"].iter().enumerate() {
+        let align = if i == 1 || i == 2 { Layout::right_to_left(Align::Center) } else { Layout::left_to_right(Align::Center) };
+        table_cell(ui, hdr, xs[i], ws[i], align, |ui| {
+            ui.label(RichText::new(*title).small().strong().color(MUTED));
         });
-        for (i, row) in merged.iter().enumerate() {
+    }
+    ui.add(egui::Separator::default().spacing(2.0));
+    let visible: Vec<(usize, &Value)> = merged
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| {
             let name = row.get("name").and_then(Value::as_str).unwrap_or("");
+            if !search.is_empty() && !effectcraft_screens::normalize(name).contains(search) {
+                return false;
+            }
+            if issues_only && issues.iter().all(|iss| iss.get("row").and_then(Value::as_str) != Some(name)) {
+                return false;
+            }
+            true
+        })
+        .collect();
+    let table = egui::ScrollArea::vertical().id_salt("screenLibrary.table").auto_shrink([false, false]).show(ui, |ui| {
+        for (vis, (i, row)) in visible.into_iter().enumerate() {
+            let name = row.get("name").and_then(Value::as_str).unwrap_or("");
+            let issue = issues.iter().find(|iss| iss.get("row").and_then(Value::as_str) == Some(name));
             let w = row.get("width").and_then(Value::as_u64).unwrap_or(0);
             let h = row.get("height").and_then(Value::as_u64).unwrap_or(0);
             let group = row.get("group").and_then(Value::as_str).unwrap_or("");
             let sm = row.get("inManager").and_then(Value::as_bool).unwrap_or(false);
             let sz = row.get("inSizemaster").and_then(Value::as_bool).unwrap_or(false);
             let sa = row.get("inAdapter").and_then(Value::as_bool).unwrap_or(false);
-            let issue = issues.iter().find(|iss| iss.get("row").and_then(Value::as_str) == Some(name));
-            let fill = if issue.is_some() { Color32::from_rgb(0x2b, 0x18, 0x14) } else { Color32::TRANSPARENT };
-            egui::Frame::new().fill(fill).inner_margin(2.0).show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(name).color(if issue.is_some() { Color32::from_rgb(0xff, 0x9b, 0x94) } else { Color32::from_gray(230) }));
-                    ui.label(format!("{w}"));
-                    ui.label(format!("{h}"));
-                    ui.label(group);
-                    ui.label(format!("{}{}{}", if sm { "SM " } else { "" }, if sz { "SzM " } else { "" }, if sa { "SA" } else { "" }));
-                    if let Some(iss) = issue {
-                        let msg = iss.get("message").and_then(Value::as_str).unwrap_or("");
-                        ui.label(RichText::new(msg).small().color(Color32::from_rgb(0xf5, 0xb8, 0x4a)));
-                        if let Some(fix) = iss.get("fix").and_then(Value::as_str).filter(|s| !s.is_empty()) {
-                            let label = iss.get("fixLabel").and_then(Value::as_str).unwrap_or("Fix");
-                            let fid = iss.get("id").and_then(Value::as_str).unwrap_or("");
-                            if auto_btn(app, ui, &format!("screenLibrary.fix.{fid}"), label) {
-                                exec(app, "screen.library.edit", json!({"fix": fid, "value": fix}));
-                            }
+            let row_h = 28.0;
+            let (rect, resp) = ui.allocate_exact_size(Vec2::new(avail, row_h), Sense::hover());
+            let fill = if issue.is_some() {
+                Color32::from_rgb(0x2b, 0x18, 0x14)
+            } else if resp.hovered() {
+                ROW_HOVER
+            } else if vis % 2 == 1 {
+                Color32::from_rgb(0x1c, 0x1c, 0x1c)
+            } else {
+                Color32::TRANSPARENT
+            };
+            ui.painter().rect_filled(rect, 0.0, fill);
+            table_cell(ui, rect, xs[0], ws[0], Layout::left_to_right(Align::Center), |ui| {
+                ui.label(RichText::new(name).color(if issue.is_some() { Color32::from_rgb(0xff, 0x9b, 0x94) } else { Color32::from_gray(230) }));
+            });
+            table_cell(ui, rect, xs[1], ws[1], Layout::right_to_left(Align::Center), |ui| {
+                ui.label(RichText::new(format!("{w}")).small().color(Color32::from_gray(210)));
+            });
+            table_cell(ui, rect, xs[2], ws[2], Layout::right_to_left(Align::Center), |ui| {
+                ui.label(RichText::new(format!("{h}")).small().color(Color32::from_gray(210)));
+            });
+            table_cell(ui, rect, xs[3], ws[3], Layout::left_to_right(Align::Center), |ui| {
+                if !group.is_empty() {
+                    pill(ui, group, Color32::from_rgb(0x28, 0x28, 0x28), MUTED);
+                }
+            });
+            table_cell(ui, rect, xs[4], ws[4], Layout::left_to_right(Align::Center), |ui| {
+                if sm {
+                    pill(ui, "SM", Color32::from_rgb(0x16, 0x30, 0x4f), Color32::from_rgb(0x79, 0xb4, 0xff));
+                }
+                if sz {
+                    pill(ui, "SzM", Color32::from_rgb(0x16, 0x3d, 0x24), Color32::from_rgb(0x5f, 0xd5, 0x85));
+                }
+                if sa {
+                    pill(ui, "SA", Color32::from_rgb(0x2a, 0x21, 0x3a), Color32::from_rgb(0xc4, 0xb5, 0xfd));
+                }
+            });
+            table_cell(ui, rect, xs[5], ws[5], Layout::left_to_right(Align::Center), |ui| {
+                if let Some(iss) = issue {
+                    let msg = iss.get("message").and_then(Value::as_str).unwrap_or("Issue");
+                    let short = msg.split('·').next().unwrap_or(msg).trim();
+                    pill(ui, short, Color32::from_rgb(0x3a, 0x27, 0x12), Color32::from_rgb(0xfd, 0xba, 0x74));
+                    if let Some(fix) = iss.get("fix").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+                        let label = iss.get("fixLabel").and_then(Value::as_str).unwrap_or("Fix");
+                        let fid = iss.get("id").and_then(Value::as_str).unwrap_or("");
+                        if auto_btn(app, ui, &format!("screenLibrary.fix.{fid}"), label) {
+                            exec(app, "screen.library.edit", json!({"fix": fid, "value": fix}));
                         }
                     }
-                });
+                } else {
+                    ui.colored_label(Color32::from_rgb(0x5f, 0xd5, 0x85), "✓");
+                }
             });
-            app.auto.add(&format!("screenLibrary.row.{i}"), ui.min_rect(), name);
+            app.auto.add(&format!("screenLibrary.row.{i}"), rect, name);
         }
     });
-    register_vscroll(app, &main_ui, "screenLibrary.table.scroll", table.inner_rect, table.content_size.y);
+    register_vscroll(app, ui, "screenLibrary.table.scroll", table.inner_rect, table.content_size.y);
 }
 
 fn combiners_editor(app: &mut EffectcraftApp, ui: &mut egui::Ui, lib: &Value) {

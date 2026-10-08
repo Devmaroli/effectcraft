@@ -30,7 +30,7 @@ pub use matcher::{CompProbe, MatchReport, check_comps};
 pub use naming::{CompNameFrom, compose_comp_name, material_stem, unique_comp_name};
 pub use normalize::{normalize, parse_pixel_size, split_paste, strip_leading_list_marker};
 pub use send::{SendPreset, default_send_preset};
-pub use sorter::{MatchMode, SorterFilters, SorterResult, hidden_row_count, send_names, sort_lines};
+pub use sorter::{MatchMode, SorterFilters, SorterResult, hidden_row_count, row_size_text, screens_pill, send_names, sort_lines};
 
 #[cfg(test)]
 mod tests {
@@ -228,10 +228,21 @@ mod tests {
         assert!(names.contains(&"Al Salam Sync"), "{names:?}");
         assert!(names.contains(&"Top Gear"), "{names:?}");
         assert!(!names.contains(&"Baitak"), "only Top Gear was pasted: {names:?}");
-        assert!(names.iter().any(|n| n.contains("Quartz") || *n == "Avenues Quartz" || *n == "The Avenues Quartz"), "{names:?}");
+        assert!(names.contains(&"Avenues Quartz"), "by-size Entry uses the pasted name, not the library title: {names:?}");
+        let quartz = r.rows.iter().find(|row| row.use_name.contains("Quartz")).expect("quartz");
+        assert_eq!(quartz.use_name, "Avenues Quartz");
+        assert!(!quartz.library_hint.is_empty(), "library name stays on the muted Pasted line: {quartz:?}");
+        let salam = r.rows.iter().find(|row| row.use_name.contains("Salam")).expect("al salam");
+        assert_eq!((salam.prod_width, salam.prod_height), (3072, 576), "{salam:?}");
+        assert_eq!(salam.covers_label, "Left + Right", "{salam:?}");
+        let marina = r.rows.iter().find(|row| row.use_name.contains("Marina") || row.covers.iter().any(|c| c.contains("Marina"))).expect("marina");
+        assert_eq!((marina.prod_width, marina.prod_height), (960, 960), "{marina:?}");
+        assert_eq!(marina.covers_label, "4 screens", "{marina:?}");
         assert!(names.contains(&"Grand Avenues"), "{names:?}");
         assert!(!names.iter().any(|n| *n == "1.7HD" && r.rows.iter().any(|row| row.use_name == "1.7HD" && row.covers.iter().any(|c| is_avenues_entrance(c)))));
         let hd = r.rows.iter().find(|row| row.use_name == "1.7HD").expect("1.7HD");
+        assert!(hd.covers_label.contains("screen"), "{hd:?}");
+        assert!(!hd.covers_label.contains("1 screens"), "{hd:?}");
         assert!(hd.count >= 2, "Jahra Prime + Salmiya (+ Rotunda) fold into 1.7HD: {hd:?}");
         assert!(!hd.covers.iter().any(|c| is_avenues_entrance(c)), "{hd:?}");
         let both = sort_lines(&lib, "Baitak\nTop Gear", true, MatchMode::Flexible, &SorterFilters::default(), false);
@@ -240,6 +251,14 @@ mod tests {
         let outdoor = sort_lines(&lib, paste, true, MatchMode::Flexible, &SorterFilters { kind: "Outdoor".into(), ..SorterFilters::default() }, false);
         let hidden = hidden_row_count(&outdoor);
         assert!(hidden >= 1, "Grand Avenues (indoor) hidden: {:?}", outdoor.rows);
+        assert!(outdoor.rows.iter().any(|row| !row.hidden && row.use_name.contains("Salam")), "Al Salam stays visible under Outdoor: {:?}", outdoor.rows);
+        assert!(
+            outdoor.rows.iter().any(|row| !row.hidden && (row.use_name.contains("Marina") || row.covers.iter().any(|c| c.contains("Marina")))),
+            "Marina stays visible under Outdoor: {:?}",
+            outdoor.rows
+        );
+        let visible = outdoor.rows.iter().filter(|r| !r.hidden).count();
+        assert!(visible >= 6, "Outdoor still shows the production sizes: visible={visible} {:?}", outdoor.rows);
         let sent = send_names(&outdoor, false);
         assert!(sent.iter().any(|n| n == "Grand Avenues" || n.contains("Grand Avenues")), "hidden still sent: {sent:?}");
         assert_eq!(sent.len(), outdoor.paste_names_by_size.len());

@@ -1,7 +1,7 @@
 # Per-user Windows x64 installer + portable zip for office installs.
-# A version tag (v0.5.0) builds both and attaches them to the GitHub Release.
+# A version tag (v0.5.1) builds both and attaches them to the GitHub Release.
 #
-#   git tag v0.5.0 && git push origin v0.5.0
+#   git tag v0.5.1 && git push origin v0.5.1
 #
 # Artifacts:
 #   effectcraft-Setup-x64.exe     Inno Setup, %LOCALAPPDATA%\Programs\Craft\effectcraft, no admin

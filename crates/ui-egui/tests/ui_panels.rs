@@ -4,7 +4,7 @@
 
 use effectcraft_engine::Session;
 use effectcraft_ui_egui::EffectcraftApp;
-use effectcraft_ui_egui::dock::PanelKind;
+use effectcraft_ui_egui::dock::{DockNode, PanelKind, SplitSize};
 use egui::{Event, Pos2, pos2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
@@ -240,6 +240,29 @@ fn screen_suite_booking_build_and_extra_stack_warning() {
     );
 }
 
+fn mockup_dock() -> DockNode {
+    mockup_dock_width(520.0)
+}
+
+fn mockup_dock_width(panel: f32) -> DockNode {
+    DockNode::Split {
+        vertical: false,
+        size: SplitSize::FixedB(panel),
+        a: Box::new(DockNode::Split {
+            vertical: true,
+            size: SplitSize::Ratio(0.58),
+            a: Box::new(DockNode::Split {
+                vertical: false,
+                size: SplitSize::FixedA(260.0),
+                a: Box::new(DockNode::Tabs { panels: vec![PanelKind::Project, PanelKind::EffectControls], active: 0 }),
+                b: Box::new(DockNode::Tabs { panels: vec![PanelKind::Composition, PanelKind::Layer], active: 0 }),
+            }),
+            b: Box::new(DockNode::Tabs { panels: vec![PanelKind::Timeline, PanelKind::RenderQueue], active: 0 }),
+        }),
+        b: Box::new(DockNode::Tabs { panels: vec![PanelKind::ScreenSuite, PanelKind::Properties, PanelKind::Preview], active: 0 }),
+    }
+}
+
 /// Comparison shots for the approved v2 mockups (steps 2, 2b, 4b, 6, library1).
 /// `SCREEN_SUITE_V2_SNAP=/abs/dir cargo test -p effectcraft-ui-egui --test ui_panels -- --ignored screen_suite_v2`
 #[test]
@@ -250,14 +273,24 @@ fn screen_suite_v2_snapshots() {
     let paste = "Jahra Prime\nSalmiya Express\nJahra Rotonda\nAl Salam Sync\nPiccadilly\nTop Gear\nAvenues Quartz\nAl Nassar Tower\n1st Ring Road\nMarina Palm Trees\nGrand Avenues Entrance";
     let mut s = Session::default();
     s.execute("comp.new", json!({"name": "SpringSale_Master", "width": 1920, "height": 1080, "duration": 10, "frameRate": 25.0})).unwrap();
+    s.execute("layer.newSolid", json!({"name": "LOGO", "color": "#ffffff", "width": 160, "height": 48})).unwrap();
+    s.execute("layer.newText", json!({"name": "Headline SPRING SALE", "text": "SPRING SALE", "size": 72})).unwrap();
+    s.execute("layer.newText", json!({"name": "CTA Shop now", "text": "Shop now", "size": 28})).unwrap();
+    s.execute("layer.newSolid", json!({"name": "Product shot", "color": "#6b4cff", "width": 320, "height": 180})).unwrap();
     s.execute("screen.suite.naming", json!({"jobName": "Spring Sale", "prefix": "SpringSale", "suffix": "EN, AR"})).unwrap();
     s.execute("screen.sorter.sort", json!({"paste": paste, "cleanup": true, "kind": "Outdoor", "matchMode": "flexible"})).unwrap();
     let mut h = Harness::builder().with_size(egui::vec2(1680.0, 1020.0)).build_eframe(|_| EffectcraftApp::new(s));
     h.run_steps(3);
-    open(&mut h, "screenSuite");
-    h.state_mut().ui.maximized = Some(PanelKind::ScreenSuite);
-    h.run_steps(4);
+    h.state_mut().ui.dock = mockup_dock();
+    h.state_mut().ui.maximized = None;
+    h.state_mut().ui.focused = PanelKind::ScreenSuite;
+    h.run_steps(6);
     h.render().expect("render").save(format!("{dir}/v2-step2-size-sorter.png")).unwrap();
+
+    h.state_mut().ui.dock = mockup_dock_width(340.0);
+    h.state_mut().ui.maximized = None;
+    h.run_steps(6);
+    h.render().expect("render").save(format!("{dir}/v2-step2-size-sorter-narrow.png")).unwrap();
 
     h.state_mut().session.execute("screen.sorter.send", json!({"screenSpecific": false})).unwrap();
     h.state_mut().session.execute("screen.manager.apply", json!({"prefix": "SpringSale", "suffix": "EN"})).unwrap();
@@ -269,12 +302,16 @@ fn screen_suite_v2_snapshots() {
         )
         .unwrap();
     h.state_mut().session.execute("screen.suite.tab", json!({"tab": "booking"})).unwrap();
+    h.state_mut().ui.dock = mockup_dock();
+    h.state_mut().ui.maximized = None;
     h.run_steps(4);
     h.render().expect("render").save(format!("{dir}/v2-step2b-live-update.png")).unwrap();
 
     h.state_mut().session.execute("screen.sorter.send", json!({"screenSpecific": true})).unwrap();
     h.state_mut().session.execute("screen.suite.naming", json!({"nameFrom": "prefixScreen", "prefix": "SpringSale", "suffix": "EN, AR"})).unwrap();
     h.state_mut().session.execute("screen.suite.tab", json!({"tab": "build"})).unwrap();
+    h.state_mut().ui.dock = mockup_dock();
+    h.state_mut().ui.maximized = None;
     h.run_steps(4);
     h.render().expect("render").save(format!("{dir}/v2-step4b-naming.png")).unwrap();
 
@@ -282,15 +319,18 @@ fn screen_suite_v2_snapshots() {
     h.state_mut().session.execute("comp.new", json!({"name": "Al Salam Sync B", "width": 1536, "height": 576, "frameRate": 25.0, "open": false})).unwrap();
     h.state_mut().session.execute("screen.manager.select", json!({"names": ["Al Salam Sync"], "jobMode": "bySize"})).unwrap();
     h.state_mut().session.execute("screen.manager.combine", json!({"combiner": "Al_Salam_Sync"})).unwrap();
-    h.state_mut().session.execute("screen.matcher.check", json!({"names": ["Al Salam Sync"]})).unwrap();
+    h.state_mut().session.execute("screen.matcher.check", json!({})).unwrap();
     h.state_mut().session.execute("screen.suite.tab", json!({"tab": "qc"})).unwrap();
+    h.state_mut().ui.dock = mockup_dock();
+    h.state_mut().ui.maximized = None;
     h.run_steps(4);
     h.render().expect("render").save(format!("{dir}/v2-step6-size-matcher.png")).unwrap();
 
     h.state_mut().session.execute("screen.library.open", json!({})).unwrap();
     let ctx = h.ctx.clone();
     effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "window.panel", json!({"panel": "screenLibrary", "float": true})).unwrap();
-    h.state_mut().ui.maximized = Some(PanelKind::ScreenLibrary);
+    h.state_mut().ui.dock = mockup_dock();
+    h.state_mut().ui.maximized = None;
     h.run_steps(4);
     h.render().expect("render").save(format!("{dir}/v2-library1-editor.png")).unwrap();
 }

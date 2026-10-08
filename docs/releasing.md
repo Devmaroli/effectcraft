@@ -63,7 +63,7 @@ The ARM64 MSI is installed and run on ARM64 hardware by
 
 ### Windows office install (per-user Setup.exe + portable zip)
 
-Pushing a version tag (`v0.5.0`, `v0.5.0-rc.1`) runs
+Pushing a version tag (`v0.5.1`, `v0.5.1-rc.1`) runs
 [`.github/workflows/windows-office-install.yml`](../.github/workflows/windows-office-install.yml)
 on `windows-latest`. It builds the MSVC binaries, compiles an Inno Setup installer, zips a
 portable copy, writes `SHA256SUMS.txt`, and attaches all three to the GitHub Release for that tag.
