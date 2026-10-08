@@ -2,7 +2,7 @@
 //! Character and Paragraph panels show and change the selected text (creating style runs);
 //! otherwise they apply to the whole selected text layer.
 
-use effectcraft_engine::keyframe::{BaselineOption, Composer, Direction, FigureStyle, FigureWidth, Justify, Kerning, TextDoc};
+use effectcraft_engine::keyframe::{BaselineOption, Composer, DigitStyle, Direction, FigureStyle, FigureWidth, Justify, Kerning, TextDoc};
 use effectcraft_engine::render::EvalCtx;
 use egui::{Align2, Rect, Sense, pos2, vec2};
 use serde_json::json;
@@ -79,7 +79,27 @@ fn toggle(app: &mut EffectcraftApp, ui: &mut egui::Ui, p: &egui::Painter, r: Rec
     resp.clicked()
 }
 
+fn hint(p: &egui::Painter, pos: egui::Pos2, text: &str, t: &Tokens) {
+    p.text(pos, Align2::LEFT_CENTER, text, Tokens::ui(10.0), t.text_faint);
+}
+
+fn new_chip(p: &egui::Painter, pos: egui::Pos2, t: &Tokens, label: &str) {
+    let w = 30.0;
+    let r = Rect::from_min_size(pos, vec2(w, 13.0));
+    p.rect_filled(r, 3.0, t.accent);
+    p.text(r.center(), Align2::CENTER_CENTER, label, Tokens::semibold(8.5), egui::Color32::WHITE);
+}
+
 pub fn character(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::top_down(egui::Align::Min)));
+    egui::ScrollArea::vertical().id_salt("character-scroll").auto_shrink([false, false]).show(&mut child, |ui| {
+        ui.set_min_size(vec2(rect.width(), 640.0));
+        let inner = Rect::from_min_size(ui.min_rect().min, vec2(rect.width(), 640.0));
+        character_body(app, ui, inner);
+    });
+}
+
+fn character_body(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let t = app.tokens;
     let p = ui.painter().with_clip_rect(rect);
     let ctx = ui.ctx().clone();
@@ -113,6 +133,45 @@ pub fn character(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         actions.push(json!({"style": st}));
     }
     y += 34.0;
+    p.text(pos2(x0, y + 10.0), Align2::LEFT_CENTER, crate::i18n::panel(app, "Arabic fallback"), Tokens::ui(11.0), t.text_dim);
+    let fb = if doc.arabic_fallback.is_empty() { effectcraft_text::arabic::default_arabic_fallback() } else { doc.arabic_fallback.clone() };
+    let fbr = Rect::from_min_size(pos2(x0 + 96.0, y), vec2((w - 96.0).max(80.0), 22.0));
+    let fbpop = egui::Id::new("char-arabic-fallback-pop");
+    if widgets::dropdown(ui, fbr, &fb, &t, egui::Id::new("char-arabic-fallback")).clicked() && enabled {
+        widgets::open_popup(ui, fbpop);
+    }
+    app.auto.add("character.arabicFallback", fbr, "Arabic fallback");
+    let fb_opts: Vec<String> = effectcraft_text::arabic::ARABIC_FALLBACK_FAMILIES.iter().map(|s| (*s).to_string()).collect();
+    if let Some(i) = widgets::popup_menu(ui, fbpop, fbr.left_bottom(), &fb_opts, fb_opts.iter().position(|s| *s == fb))
+        && let Some(name) = fb_opts.get(i)
+    {
+        actions.push(json!({"arabicFallback": name}));
+    }
+    y += 22.0;
+    let fb_hint = crate::i18n::panel(app, "Used for Arabic letters {font} doesn't have.").replace("{font}", &doc.font);
+    hint(&p, pos2(x0, y + 8.0), &fb_hint, &t);
+    y += 22.0;
+    // Fill / stroke swatches (mockup: after fallback, before the metrics grid).
+    for (i, (key, label, on, c)) in [("fill", "Fill", doc.apply_fill, doc.fill), ("stroke", "Stroke", doc.apply_stroke, doc.stroke)].into_iter().enumerate() {
+        let fx = x0 + i as f32 * (w / 2.0);
+        let cr = Rect::from_min_size(pos2(fx, y + 3.0), vec2(14.0, 14.0));
+        if widgets::checkbox(ui, cr, on, &t, egui::Id::new(("char-apply", key))).clicked() && enabled {
+            actions.push(json!({if key == "fill" { "applyFill" } else { "applyStroke" }: !on}));
+        }
+        app.auto.add(&format!("character.{key}.enabled"), cr, label);
+        let fs = Rect::from_min_size(pos2(fx + 20.0, y), vec2(26.0, 20.0));
+        let pop = egui::Id::new(("char-color-pop", key));
+        if widgets::swatch(ui, fs, c, egui::Id::new(("char-color", key)), &t).clicked() && enabled {
+            widgets::open_popup(ui, pop);
+        }
+        app.auto.add(&format!("character.{key}"), fs, label);
+        let mut rgb = [c[0], c[1], c[2]];
+        if crate::header::color_popup(ui, pop, fs.left_bottom(), &mut rgb) {
+            actions.push(json!({key: [rgb[0], rgb[1], rgb[2]], "merge": format!("char-{key}")}));
+        }
+        p.text(pos2(fs.max.x + 6.0, y + 10.0), Align2::LEFT_CENTER, label, Tokens::ui(11.5), t.text_dim);
+    }
+    y += 32.0;
     // Numeric fields in AE's two-column grid (Kerning is a popup, at row 1 right).
     let fields: [(&str, &str, f64, (f64, f64), &str); 10] = [
         ("size", "T", doc.size, (1.0, 2000.0), " px"),
@@ -184,27 +243,6 @@ pub fn character(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         }
     }
     y += 5.0 * 28.0 + 8.0;
-    // Fill / stroke swatches with their enable boxes.
-    for (i, (key, label, on, c)) in [("fill", "Fill", doc.apply_fill, doc.fill), ("stroke", "Stroke", doc.apply_stroke, doc.stroke)].into_iter().enumerate() {
-        let fx = x0 + i as f32 * (w / 2.0);
-        let cr = Rect::from_min_size(pos2(fx, y + 3.0), vec2(14.0, 14.0));
-        if widgets::checkbox(ui, cr, on, &t, egui::Id::new(("char-apply", key))).clicked() && enabled {
-            actions.push(json!({if key == "fill" { "applyFill" } else { "applyStroke" }: !on}));
-        }
-        app.auto.add(&format!("character.{key}.enabled"), cr, label);
-        let fs = Rect::from_min_size(pos2(fx + 20.0, y), vec2(26.0, 20.0));
-        let pop = egui::Id::new(("char-color-pop", key));
-        if widgets::swatch(ui, fs, c, egui::Id::new(("char-color", key)), &t).clicked() && enabled {
-            widgets::open_popup(ui, pop);
-        }
-        app.auto.add(&format!("character.{key}"), fs, label);
-        let mut rgb = [c[0], c[1], c[2]];
-        if crate::header::color_popup(ui, pop, fs.left_bottom(), &mut rgb) {
-            actions.push(json!({key: [rgb[0], rgb[1], rgb[2]], "merge": format!("char-{key}")}));
-        }
-        p.text(pos2(fs.max.x + 6.0, y + 10.0), Align2::LEFT_CENTER, label, Tokens::ui(11.5), t.text_dim);
-    }
-    y += 32.0;
     // Style toggles: Faux Bold, Faux Italic, All Caps, Small Caps, Superscript, Subscript.
     let sup = doc.baseline == BaselineOption::Superscript;
     let sub = doc.baseline == BaselineOption::Subscript;
@@ -224,13 +262,42 @@ pub fn character(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         }
     }
     y += 32.0;
+    let jr = Rect::from_min_size(pos2(x0, y), vec2(14.0, 14.0));
+    if widgets::checkbox(ui, jr, doc.keep_arabic_joined, &t, egui::Id::new("char-keep-joined")).clicked() && enabled {
+        actions.push(json!({"keepArabicJoined": !doc.keep_arabic_joined}));
+    }
+    app.auto.add("character.keepArabicJoined", jr, "Keep Arabic letters joined");
+    let joined = crate::i18n::panel(app, "Keep Arabic letters joined");
+    p.text(pos2(x0 + 20.0, y + 7.0), Align2::LEFT_CENTER, joined, Tokens::ui(11.5), t.text_dim);
+    new_chip(&p, pos2(x0 + w - 32.0, y), &t, crate::i18n::panel(app, "NEW"));
+    y += 18.0;
+    hint(&p, pos2(x0 + 20.0, y + 6.0), crate::i18n::panel(app, "Tracking stretches Arabic words with kashida."), &t);
+    y += 20.0;
+    p.text(pos2(x0, y + 10.0), Align2::LEFT_CENTER, crate::i18n::panel(app, "Digits"), Tokens::ui(11.0), t.text_dim);
+    let dlabel = match doc.digit_style {
+        DigitStyle::Western => crate::i18n::panel(app, "Western (50)"),
+        DigitStyle::ArabicIndic => crate::i18n::panel(app, "Arabic-Indic (٥٠)"),
+    };
+    let drd = Rect::from_min_size(pos2(x0 + 96.0, y), vec2((w - 96.0).max(80.0), 22.0));
+    let dpop = egui::Id::new("char-digits-pop");
+    if widgets::dropdown(ui, drd, dlabel, &t, egui::Id::new("char-digits")).clicked() && enabled {
+        widgets::open_popup(ui, dpop);
+    }
+    app.auto.add("character.digits", drd, "Digits");
+    let dopts = vec![crate::i18n::panel(app, "Western (50)").to_string(), crate::i18n::panel(app, "Arabic-Indic (٥٠)").to_string()];
+    if let Some(i) = widgets::popup_menu(ui, dpop, drd.left_bottom(), &dopts, Some(doc.digit_style as usize)) {
+        actions.push(json!({"digits": if i == 1 { "arabicIndic" } else { "western" }}));
+    }
+    y += 22.0;
+    hint(&p, pos2(x0, y + 8.0), crate::i18n::panel(app, "How typed 0-9 are drawn in the selection."), &t);
+    y += 22.0;
     // Ligatures.
     let lr = Rect::from_min_size(pos2(x0, y), vec2(14.0, 14.0));
     if widgets::checkbox(ui, lr, doc.ligatures, &t, egui::Id::new("char-ligatures")).clicked() && enabled {
         actions.push(json!({"ligatures": !doc.ligatures}));
     }
     app.auto.add("character.ligatures", lr, "Ligatures");
-    p.text(pos2(x0 + 20.0, y + 7.0), Align2::LEFT_CENTER, "Ligatures", Tokens::ui(11.5), t.text_dim);
+    p.text(pos2(x0 + 20.0, y + 7.0), Align2::LEFT_CENTER, crate::i18n::panel(app, "Ligatures"), Tokens::ui(11.5), t.text_dim);
     // OpenType: a popup with the font's layout features (like the Character panel's OpenType menu).
     let or = Rect::from_min_size(pos2(sr.max.x + 6.0, sr.min.y), vec2(78.0, 22.0));
     let opop = egui::Id::new("char-opentype-pop");
@@ -433,6 +500,15 @@ pub fn paint_justify_glyph(p: &egui::Painter, r: Rect, j: Justify, c: egui::Colo
 }
 
 pub fn paragraph(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::top_down(egui::Align::Min)));
+    egui::ScrollArea::vertical().id_salt("paragraph-scroll").auto_shrink([false, false]).show(&mut child, |ui| {
+        ui.set_min_size(vec2(rect.width(), 420.0));
+        let inner = Rect::from_min_size(ui.min_rect().min, vec2(rect.width(), 420.0));
+        paragraph_body(app, ui, inner);
+    });
+}
+
+fn paragraph_body(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let t = app.tokens;
     let p = ui.painter().with_clip_rect(rect);
     let ctx = ui.ctx().clone();
@@ -443,6 +519,39 @@ pub fn paragraph(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let w = rect.width() - 20.0;
     let mut y = rect.min.y + 10.0;
     let mut actions: Vec<serde_json::Value> = vec![];
+    p.text(pos2(x0, y + 11.0), Align2::LEFT_CENTER, crate::i18n::panel(app, "Direction"), Tokens::ui(11.0), t.text_dim);
+    let dirs = [
+        (Direction::Ltr, "ltr", crate::i18n::panel(app, "LTR")),
+        (Direction::Rtl, "rtl", crate::i18n::panel(app, "RTL")),
+        (Direction::Auto, "auto", crate::i18n::panel(app, "Auto")),
+    ];
+    let bx = x0 + 64.0;
+    let dw = ((w - 64.0 - 8.0) / 3.0).max(36.0);
+    for (i, (dir, key, label)) in dirs.into_iter().enumerate() {
+        let r = Rect::from_min_size(pos2(bx + i as f32 * (dw + 4.0), y), vec2(dw, 22.0));
+        let on = doc.direction == dir;
+        let resp = ui.interact(r, egui::Id::new(("para-dir", key)), Sense::click());
+        p.rect_filled(
+            r,
+            3.0,
+            if on {
+                t.accent
+            } else if resp.hovered() {
+                t.hover
+            } else {
+                t.field_bg
+            },
+        );
+        p.text(r.center(), Align2::CENTER_CENTER, label, Tokens::ui(11.0), if on { egui::Color32::WHITE } else { t.text });
+        app.auto.add(&format!("paragraph.direction.{key}"), r, label);
+        if resp.clicked() && enabled {
+            actions.push(json!({"direction": key}));
+        }
+    }
+    app.auto.add("paragraph.direction", Rect::from_min_size(pos2(x0, y), vec2(w, 22.0)), "Text direction");
+    y += 22.0;
+    hint(&p, pos2(x0, y + 8.0), crate::i18n::panel(app, "Auto: first strong letter sets the direction."), &t);
+    y += 22.0;
     let bw = ((w - 6.0 * 3.0) / 7.0).clamp(20.0, 28.0);
     for (i, (j, key)) in ALIGNS.into_iter().enumerate() {
         let r = Rect::from_min_size(pos2(x0 + i as f32 * (bw + 3.0), y), vec2(bw, 24.0));
@@ -465,7 +574,22 @@ pub fn paragraph(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
             actions.push(json!({"justify": key}));
         }
     }
-    y += 34.0;
+    y += 32.0;
+    let arabic_para = match doc.direction {
+        Direction::Rtl => true,
+        Direction::Auto => effectcraft_text::arabic::first_strong_rtl(&doc.text) == Some(true),
+        Direction::Ltr => false,
+    };
+    if arabic_para {
+        let kr = Rect::from_min_size(pos2(x0, y), vec2(14.0, 14.0));
+        if widgets::checkbox(ui, kr, doc.kashida_justify, &t, egui::Id::new("para-kashida")).clicked() && enabled {
+            actions.push(json!({"kashidaJustify": !doc.kashida_justify}));
+        }
+        app.auto.add("paragraph.kashidaJustify", kr, "Stretch with kashida");
+        p.text(pos2(x0 + 20.0, y + 7.0), Align2::LEFT_CENTER, crate::i18n::panel(app, "Stretch with kashida (tatweel)"), Tokens::ui(11.5), t.text_dim);
+        new_chip(&p, pos2(x0 + w - 32.0, y), &t, crate::i18n::panel(app, "NEW"));
+        y += 26.0;
+    }
     // Indents and spacing (AE's two-column grid).
     let fields: [(&str, &str, f64); 6] = [
         ("indentLeft", "→|", doc.indent_left),
@@ -491,24 +615,8 @@ pub fn paragraph(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         }
     }
     y += 3.0 * 28.0 + 6.0;
-    // Direction and composer popups. Settings ▸ Type ▸ Text Engine: the South Asian and Middle
-    // Eastern engine offers the paragraph direction and the World-Ready composers (the Latin
-    // engine shows the direction only for right-to-left text already set).
+    let cr = Rect::from_min_size(pos2(x0, y), vec2(w, 22.0));
     let world_ready = app.session.prefs.type_.text_engine == "southAsian";
-    let rtl = doc.direction == Direction::Rtl;
-    if world_ready || rtl {
-        let dr = Rect::from_min_size(pos2(x0, y), vec2(w / 2.0 - 4.0, 22.0));
-        let dirs = vec!["Left-to-Right Text".to_string(), "Right-to-Left Text".to_string()];
-        let dpop = egui::Id::new("para-direction-pop");
-        if widgets::dropdown(ui, dr, &dirs[rtl as usize], &t, egui::Id::new("para-direction")).clicked() && enabled {
-            widgets::open_popup(ui, dpop);
-        }
-        app.auto.add("paragraph.direction", dr, "Text direction");
-        if let Some(i) = widgets::popup_menu(ui, dpop, dr.left_bottom(), &dirs, Some(rtl as usize)) {
-            actions.push(json!({"direction": if i == 1 { "rtl" } else { "ltr" }}));
-        }
-    }
-    let cr = Rect::from_min_size(pos2(x0 + w / 2.0, y), vec2(w / 2.0, 22.0));
     let comps = if world_ready {
         vec!["World-Ready Every-line Composer".to_string(), "World-Ready Single-line Composer".to_string()]
     } else {
@@ -529,7 +637,7 @@ pub fn paragraph(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         actions.push(json!({"hangingPunctuation": !doc.hanging_punctuation}));
     }
     app.auto.add("paragraph.hangingPunctuation", hr, "Roman Hanging Punctuation");
-    p.text(pos2(x0 + 20.0, y + 7.0), Align2::LEFT_CENTER, "Roman Hanging Punctuation", Tokens::ui(11.5), t.text_dim);
+    p.text(pos2(x0 + 20.0, y + 7.0), Align2::LEFT_CENTER, crate::i18n::panel(app, "Roman Hanging Punctuation"), Tokens::ui(11.5), t.text_dim);
     if !enabled {
         p.text(pos2(rect.center().x, rect.max.y - 20.0), Align2::CENTER_CENTER, "Select a text layer", Tokens::ui(11.0), t.text_faint);
     }
@@ -543,40 +651,116 @@ pub fn paragraph(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
 
 /// The font menu: recent fonts first, names in English or the fonts' own language, and a
 /// "Sample" preview in each font (Settings ▸ Type).
-fn font_popup(app: &EffectcraftApp, ui: &mut egui::Ui, id: egui::Id, pos: egui::Pos2, current: &str) -> Option<String> {
+fn font_popup(app: &mut EffectcraftApp, ui: &mut egui::Ui, id: egui::Id, pos: egui::Pos2, current: &str) -> Option<String> {
     if !ui.data(|d| d.get_temp::<bool>(id.with("open")).unwrap_or(false)) {
         return None;
     }
     let rows = effectcraft_engine::font_menu(&app.session.prefs);
     let preview = app.session.prefs.type_.font_preview;
     let t = app.tokens;
+    let filter_id = egui::Id::new("char-font-filter");
+    let query_id = egui::Id::new("char-font-q");
+    let filter: u8 = ui.data(|d| d.get_temp(filter_id).unwrap_or(0)); // 0 all, 1 arabic, 2 recent
+    let mut query: String = ui.data(|d| d.get_temp(query_id).unwrap_or_default());
     let mut chosen = None;
+    let mut next_filter = filter;
+    let mut autos: Vec<(String, Rect, String)> = vec![];
+    let all_n = rows.iter().filter(|r| !r.family.is_empty() && !r.recent).count();
+    let ar_n = rows.iter().filter(|r| r.arabic && !r.recent).count();
+    let chip = [format!("{} · {all_n}", crate::i18n::panel(app, "All")), format!("{} · {ar_n}", crate::i18n::panel(app, "Arabic")), "★".to_string()];
+    let arabic_tag = crate::i18n::panel(app, "Arabic").to_string();
+    let no_arabic = crate::i18n::panel(app, "No Arabic · uses fallback").to_string();
+    let recent_h = crate::i18n::panel(app, "Recent").to_string();
+    let all_h = crate::i18n::panel(app, "All fonts").to_string();
+    let search_hint = crate::i18n::panel(app, "Search fonts").to_string();
+    let pop_w = if preview { 520.0 } else { 360.0 };
     let area = egui::Area::new(id.with("area")).order(egui::Order::Foreground).fixed_pos(pos).show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
-            ui.set_min_width(if preview { 300.0 } else { 180.0 });
+            ui.set_min_width(pop_w);
+            ui.set_max_width(pop_w);
+            let te = ui.add(egui::TextEdit::singleline(&mut query).desired_width(pop_w - 24.0).hint_text(search_hint.as_str()));
+            autos.push(("character.font.search".into(), te.rect, "Search fonts".into()));
+            ui.horizontal(|ui| {
+                for (i, label) in chip.iter().enumerate() {
+                    let on = filter == i as u8;
+                    let r = ui.selectable_label(on, label);
+                    let aid = match i {
+                        1 => "character.font.filter.arabic",
+                        2 => "character.font.filter.star",
+                        _ => "character.font.filter.all",
+                    };
+                    autos.push((aid.into(), r.rect, label.clone()));
+                    if r.clicked() {
+                        next_filter = i as u8;
+                    }
+                }
+            });
+            let q = query.to_lowercase();
+            let mut headed_recent = false;
+            let mut headed_all = false;
             egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
+                ui.set_min_width(pop_w - 16.0);
                 for r in &rows {
                     if r.family.is_empty() {
                         ui.separator();
                         continue;
                     }
-                    let resp = ui.selectable_label(r.family == current, &r.display);
+                    if filter == 1 && !r.arabic {
+                        continue;
+                    }
+                    if filter == 2 && !r.recent {
+                        continue;
+                    }
+                    if !q.is_empty() {
+                        let fam = r.family.to_lowercase();
+                        let disp = r.display.to_lowercase();
+                        if !fam.contains(&q) && !disp.contains(&q) {
+                            continue;
+                        }
+                    }
+                    if q.is_empty() && filter == 0 && r.recent && !headed_recent {
+                        ui.label(egui::RichText::new(&recent_h).small().color(t.text_faint));
+                        headed_recent = true;
+                    }
+                    if q.is_empty() && filter == 0 && !r.recent && !headed_all {
+                        ui.label(egui::RichText::new(&all_h).small().color(t.text_faint));
+                        headed_all = true;
+                    }
+                    let resp = ui.allocate_response(vec2(pop_w - 20.0, 28.0), Sense::click());
+                    if r.family == current {
+                        ui.painter().rect_filled(resp.rect, 3.0, t.row_selected);
+                    } else if resp.hovered() {
+                        ui.painter().rect_filled(resp.rect, 3.0, t.hover);
+                    }
+                    ui.painter().text(pos2(resp.rect.min.x + 8.0, resp.rect.center().y), Align2::LEFT_CENTER, &r.display, Tokens::ui(12.0), t.text);
+                    let sample_x = resp.rect.min.x + 168.0;
                     if preview && ui.is_rect_visible(resp.rect) {
-                        let key = egui::Id::new(("font-preview", &r.family));
+                        let sample = if r.arabic { "أبجد هوز" } else { "Sample" };
+                        let key = egui::Id::new(("font-preview", &r.family, sample));
                         let lines: std::sync::Arc<Vec<Vec<[f32; 2]>>> = match ui.data(|d| d.get_temp(key)) {
                             Some(l) => l,
                             None => {
-                                let l = std::sync::Arc::new(effectcraft_engine::font_preview(&r.family, 14.0));
+                                let l = std::sync::Arc::new(effectcraft_engine::font_preview_text(&r.family, 13.0, sample));
                                 ui.data_mut(|d| d.insert_temp(key, l.clone()));
                                 l
                             }
                         };
-                        let o = pos2(resp.rect.max.x - 120.0, resp.rect.center().y + 5.0);
+                        let o = pos2(sample_x, resp.rect.center().y + 4.0);
                         for poly in lines.iter() {
-                            let pts: Vec<egui::Pos2> = poly.iter().map(|p| o + vec2(p[0], p[1])).collect();
+                            let pts: Vec<egui::Pos2> = poly.iter().map(|pt| o + vec2(pt[0], pt[1])).collect();
                             ui.painter().add(egui::Shape::line(pts, egui::Stroke::new(1.0, t.text_dim)));
                         }
                     }
+                    let tag_right = resp.rect.max.x - 8.0;
+                    if r.arabic {
+                        let tw = 48.0;
+                        let tr = Rect::from_min_size(pos2(tag_right - tw, resp.rect.center().y - 8.0), vec2(tw, 16.0));
+                        ui.painter().rect_filled(tr, 3.0, t.cache_green);
+                        ui.painter().text(tr.center(), Align2::CENTER_CENTER, &arabic_tag, Tokens::semibold(10.0), egui::Color32::WHITE);
+                    } else {
+                        ui.painter().text(pos2(tag_right, resp.rect.center().y), Align2::RIGHT_CENTER, &no_arabic, Tokens::ui(10.0), t.text_faint);
+                    }
+                    autos.push((format!("character.font.row.{}", r.family), resp.rect, r.family.clone()));
                     if resp.clicked() {
                         chosen = Some(r.family.clone());
                     }
@@ -584,6 +768,14 @@ fn font_popup(app: &EffectcraftApp, ui: &mut egui::Ui, id: egui::Id, pos: egui::
             });
         });
     });
+    ui.data_mut(|d| d.insert_temp(query_id, query));
+    if next_filter != filter {
+        ui.data_mut(|d| d.insert_temp(filter_id, next_filter));
+    }
+    for (aid, r, label) in autos {
+        app.auto.add(&aid, r, &label);
+    }
+    app.auto.add("character.font.filter", area.response.rect, "Font filter");
     let outside = widgets::pressed_outside(ui.ctx(), &area.response);
     if chosen.is_some() || outside || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
         ui.data_mut(|d| d.insert_temp(id.with("open"), false));

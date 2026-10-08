@@ -208,8 +208,8 @@ fn move_target(s: &Session, e: &TextEdit, doc: &TextDoc, to: &str) -> Result<(us
     Ok(match to {
         "left" if collapse => (lo, None),
         "right" if collapse => (hi, None),
-        "left" => (e.caret.saturating_sub(1), None),
-        "right" => ((e.caret + 1).min(n), None),
+        "left" => (lay().visual_neighbor(e.caret, true), None),
+        "right" => (lay().visual_neighbor(e.caret, false), None),
         "wordLeft" => (effectcraft_keyframe::text_doc::word_left(&doc.text, e.caret), None),
         "wordRight" => (effectcraft_keyframe::text_doc::word_right(&doc.text, e.caret), None),
         "lineStart" | "home" => (lay().line_span(e.caret).0, None),
@@ -267,10 +267,18 @@ fn insert(s: &mut Session, p: &Value) -> Result<Value> {
     let r = range_p(p).unwrap_or_else(|| e.range());
     let pending = e.pending.clone();
     let merge = str_p(p, "merge").map(str::to_string);
+    let created = e.created;
     edit_doc(s, "Edit Text", merge.as_deref(), lid, |doc, st| {
         let n = doc.char_len();
         let r = r.start.min(n)..r.end.min(n);
         doc.replace_range(r.clone(), &text, pending.as_ref());
+        if created
+            && matches!(doc.direction, effectcraft_keyframe::Direction::Auto | effectcraft_keyframe::Direction::Rtl)
+            && effectcraft_text::arabic::first_strong_rtl(&doc.text) == Some(true)
+            && matches!(doc.justify, effectcraft_keyframe::Justify::Left | effectcraft_keyframe::Justify::Center)
+        {
+            doc.justify = effectcraft_keyframe::Justify::Right;
+        }
         let c = r.start + text.chars().count();
         if let Some(ed) = st.text_edit.as_mut().filter(|ed| ed.layer == lid) {
             ed.anchor = c;
@@ -294,8 +302,17 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
     let r = match range_p(p) {
         Some(r) => r.start.min(n)..r.end.min(n),
         None if !e.is_empty() => e.range(),
-        None if forward => e.caret..if word { effectcraft_keyframe::text_doc::word_right(&doc.text, e.caret) } else { (e.caret + 1).min(n) },
-        None => (if word { effectcraft_keyframe::text_doc::word_left(&doc.text, e.caret) } else { e.caret.saturating_sub(1) })..e.caret,
+        None if forward => {
+            e.caret..if word {
+                effectcraft_keyframe::text_doc::word_right(&doc.text, e.caret)
+            } else {
+                effectcraft_text::arabic::grapheme_after(&doc.text, e.caret).min(n)
+            }
+        }
+        None => {
+            (if word { effectcraft_keyframe::text_doc::word_left(&doc.text, e.caret) } else { effectcraft_text::arabic::grapheme_before(&doc.text, e.caret) })
+                ..e.caret
+        }
     };
     if r.is_empty() {
         return Ok(state_json(s));

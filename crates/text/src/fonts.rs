@@ -25,6 +25,7 @@ pub static INTER_BOLD: &[u8] = include_bytes!("../../../assets/fonts/Inter-Bold.
 pub static INTER_ITALIC: &[u8] = include_bytes!("../../../assets/fonts/Inter-Italic.ttf");
 pub static JETBRAINS_MONO_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/JetBrainsMono-Regular.ttf");
 pub static NOTO_SERIF_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/NotoSerif-Regular.ttf");
+pub static NOTO_NASKH_ARABIC_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/NotoNaskhArabic-Regular.ttf");
 
 /// The default family for new text.
 pub const DEFAULT_FAMILY: &str = "Inter";
@@ -267,7 +268,8 @@ fn db() -> &'static RwLock<Db> {
     static DB: OnceLock<RwLock<Db>> = OnceLock::new();
     DB.get_or_init(|| {
         let mut db = Db { faces: Vec::new(), scanned: false };
-        for b in [INTER_REGULAR, INTER_MEDIUM, INTER_SEMIBOLD, INTER_BOLD, INTER_ITALIC, JETBRAINS_MONO_REGULAR, NOTO_SERIF_REGULAR] {
+        for b in [INTER_REGULAR, INTER_MEDIUM, INTER_SEMIBOLD, INTER_BOLD, INTER_ITALIC, JETBRAINS_MONO_REGULAR, NOTO_SERIF_REGULAR, NOTO_NASKH_ARABIC_REGULAR]
+        {
             for n in read_faces_bytes(b) {
                 push(&mut db, info_from(n, FaceData::Static(b), "bundled"));
             }
@@ -494,6 +496,7 @@ enum FallbackScript {
     /// Han ideographs, CJK punctuation and full-width forms: shared by Japanese, Chinese and
     /// Korean; the locale decides which family to try first.
     Han,
+    Arabic,
     Other,
 }
 
@@ -510,6 +513,7 @@ fn script_of(c: char) -> FallbackScript {
         | 0xFE30..=0xFE4F
         | 0xFF00..=0xFFEF
         | 0x20000..=0x3FFFF => FallbackScript::Han,
+        0x0600..=0x06FF | 0x0750..=0x077F | 0x08A0..=0x08FF | 0xFB50..=0xFDFF | 0xFE70..=0xFEFF => FallbackScript::Arabic,
         _ => FallbackScript::Other,
     }
 }
@@ -548,6 +552,7 @@ const CHINESE_FAMILIES: &[&str] = &[
     "WenQuanYi Micro Hei",
 ];
 const KOREAN_FAMILIES: &[&str] = &["Malgun Gothic", "Gulim", "Apple SD Gothic Neo", "Noto Sans CJK KR", "Noto Sans KR", "Source Han Sans KR", "NanumGothic"];
+const ARABIC_FAMILIES: &[&str] = crate::arabic::ARABIC_FALLBACK_FAMILIES;
 
 /// The CJK language to try first for Han ideographs, from the locale environment (`LANG`,
 /// `LC_ALL`, `LC_CTYPE`; `EFFECTCRAFT_CJK_LOCALE` overrides them). Japanese when nothing says
@@ -574,6 +579,7 @@ fn families_for(s: FallbackScript) -> &'static [&'static str] {
         FallbackScript::Japanese => JAPANESE_FAMILIES,
         FallbackScript::Han => CHINESE_FAMILIES,
         FallbackScript::Korean => KOREAN_FAMILIES,
+        FallbackScript::Arabic => ARABIC_FAMILIES,
         FallbackScript::Other => &[],
     }
 }
@@ -675,7 +681,9 @@ mod tests {
             assert!(inter.1.iter().any(|x| x == s), "{s} in {:?}", inter.1);
         }
         assert!(fams.iter().any(|(f, _)| f == "Noto Serif"));
+        assert!(fams.iter().any(|(f, _)| f == "Noto Naskh Arabic"));
         assert!(fams.iter().any(|(f, _)| f == "JetBrains Mono"));
+        assert_eq!(crate::arabic::arabic_quality(resolve("Noto Naskh Arabic", "Regular").face), crate::arabic::ArabicQuality::Good);
         let b = resolve("inter", "bold");
         assert_eq!(face(b.face).info.style, "Bold");
         assert!(!b.synth_bold);
@@ -751,6 +759,7 @@ mod tests {
         assert_eq!(script_of('\u{20000}'), FallbackScript::Han);
         assert_eq!(script_of('A'), FallbackScript::Other);
         assert_eq!(script_of('\u{5d0}'), FallbackScript::Other);
+        assert_eq!(script_of('ع'), FallbackScript::Arabic);
     }
 
     /// Native: Japanese text in a Latin-only family falls back to an installed Japanese family
