@@ -20,6 +20,8 @@
 //!     (--gpu: CPU vs GPU ms/frame for every comp at Full and Half)
 //! effectcraft-cli bench --ops [--small] [--layers N] [--comps N] [--footage N]   everyday-operation timings
 //!     on a large generated project (open, save, auto-save, undo/redo, timeline, Project panel)
+//! effectcraft-cli bench --playback-profile [--play N] [--gpu] [--json] [--out FILE]
+//!     decode / composite / upload / e2e timings for ProRes HQ 6880×1032, H.264 1080p, 4-layer comps
 //! effectcraft-cli script FILE.jsx [F.ecproj] | --eval CODE    run an After Effects-style script
 //! effectcraft-cli mcp [--bridge PORT]                         MCP server on stdio
 //!
@@ -40,7 +42,9 @@ use std::io::Write;
 
 use effectcraft_automation::tools::{self, Reply};
 use effectcraft_automation::{Backend, McpServer};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
+
+mod playback_profile;
 
 /// `println!` that never panics: see [`write_line`].
 macro_rules! say {
@@ -109,6 +113,9 @@ const USAGE: &str = "usage: effectcraft-cli <info|commands|exec|run|props|get|se
   bench --ops [--small] [--layers N] [--comps N] [--footage N]
                                            everyday operations on a large generated project: startup, open,
                                            save, auto-save, edits + undo/redo, timeline, Project panel
+  bench --playback-profile [--play N] [--gpu] [--json] [--out FILE]
+                                           decode/composite/upload/e2e fps for ProRes HQ 6880×1032,
+                                           H.264 1920×1080 and a 4-layer 25 fps comp (ffmpeg fixtures)
   script FILE.jsx [F.ecproj] | --eval CODE run JavaScript with the After Effects-style object model
                                            (app.project, comps, layers, properties…); prints writeLn
                                            output and the result; errors exit 1 with file:line:col
@@ -175,6 +182,7 @@ const FLAGS: &[&str] = &[
     "--queue",
     "--ops",
     "--dooh",
+    "--playback-profile",
     "--serial",
     "--small",
     "--adv3d",
@@ -745,6 +753,9 @@ fn bench_cmd(args: &Args) -> Result<(), Failure> {
     if args.flag("--dooh") {
         return bench_dooh(args);
     }
+    if args.flag("--playback-profile") {
+        return playback_profile::run(args);
+    }
     let mut s = effectcraft_host::session();
     match &args.project {
         Some(p) => s.execute("file.open", json!({"path": p})),
@@ -884,14 +895,18 @@ fn bench_ops(args: &Args) -> Result<(), Failure> {
 
 // ---------------------------------------------------------------- benchmark helpers
 
-use effectcraft_engine::Session;
 use effectcraft_engine::project::ItemId;
+use effectcraft_engine::Session;
 use effectcraft_render::{LayerCache, LayerTiming, RenderOpts, Renderer};
 use effectcraft_time::Tick;
 
 fn median(v: &mut [f64]) -> f64 {
     v.sort_by(f64::total_cmp);
-    if v.is_empty() { 0.0 } else { v[v.len() / 2] }
+    if v.is_empty() {
+        0.0
+    } else {
+        v[v.len() / 2]
+    }
 }
 
 fn min(v: &[f64]) -> f64 {
