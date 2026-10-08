@@ -30,7 +30,8 @@ impl Session {
         self.footage.set_conform_folder(self.conformed_audio_folder());
         // Switches Affect Nested Comps changes what precomp layers render: drop cached pixels.
         let nested = self.prefs.general.switches_affect_nested_comps;
-        if self.applied_nested_switches.replace(nested).is_some_and(|was| was != nested) {
+        let previous = self.applied_nested_switches.replace(nested).unwrap_or(true);
+        if previous != nested {
             self.layer_cache.clear();
             self.events.push(crate::Event::PurgeCaches);
         }

@@ -897,6 +897,7 @@ impl<'a> Renderer<'a> {
 
     fn plate_key(&self, ctx: &EvalCtx<'a>, layers: &[&'a Layer], canvas: &Image) -> Option<u64> {
         cache::plate_key(ctx, layers, self.opts.scale, canvas.width, canvas.height, self.opts.draft, self.opts.proxy, self.inherited)
+            .map(|k| cache::with_scope(k, self.inherited, self.opts.nested_switches, self.opts.proxy))
     }
 
     /// Draw a run of independent 2D layers: reuse a cached static plate when the bottom of the
@@ -1316,6 +1317,7 @@ impl<'a> Renderer<'a> {
 
     fn content_buf_timed(&self, ctx: &EvalCtx, layer: &Layer, mut timing: Option<&mut LayerTiming>) -> Option<(Arc<Buf>, Option<u64>)> {
         let key = self.cache.and_then(|_| cache::layer_key(ctx, layer, self.raster_scale(ctx, layer), self.opts.draft, self.mb_on(ctx, layer)));
+        let key = key.map(|k| cache::with_scope(k, self.inherited, self.opts.nested_switches, self.opts.proxy));
         let key = self.content_key(ctx, layer, key);
         if let (Some(c), Some(k)) = (self.cache, key)
             && let Some(b) = c.get(k)
@@ -1338,6 +1340,7 @@ impl<'a> Renderer<'a> {
     /// under its own key, so scrubbing reuses frames rendered for earlier output frames.
     pub fn layer_input(&self, ctx: &EvalCtx, layer: &Layer, effects: usize) -> Option<Arc<Buf>> {
         let key = self.cache.and_then(|_| cache::input_key(ctx, layer, self.raster_scale(ctx, layer), self.opts.draft, self.mb_on(ctx, layer), effects));
+        let key = key.map(|k| cache::with_scope(k, self.inherited, self.opts.nested_switches, self.opts.proxy));
         let key = self.content_key(ctx, layer, key);
         if let (Some(c), Some(k)) = (self.cache, key)
             && let Some(b) = c.get(k)

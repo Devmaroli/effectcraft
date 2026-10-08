@@ -631,9 +631,12 @@ fn key_any(ctx: &EvalCtx, layer: &Layer, scale: f64, draft: bool, blur: bool, fo
             ctx.comp.enable_frame_blending.hash(&mut h);
         }
         LayerSource::Comp { item } => {
+            let it = ctx.project.item(*item)?;
             let nc = ctx.project.comp(*item)?;
             let nctx = EvalCtx { comp_id: *item, comp: nc, time: ctx.nested_time(layer), ..*ctx };
             hash_debug(&mut h, nc);
+            // A composition proxy (and its Use Proxy switch) stands in for the nested pixels.
+            hash_debug(&mut h, &it.proxy);
             item.hash(&mut h);
             if !nc.layers.iter().all(|l| layer_is_static(&nctx, l)) {
                 nctx.time.0.hash(&mut h);
@@ -708,5 +711,16 @@ pub fn styles_key(ctx: &EvalCtx, layer: &Layer, content_key: u64) -> u64 {
 pub fn derive(key: u64, i: u64) -> u64 {
     let mut h = KeyHasher(key);
     i.hash(&mut h);
+    h.finish()
+}
+
+/// Fold render-scope inputs into a content key: inherited Draft/Best from a parent precomp,
+/// whether Switches Affect Nested Comps is on, and Proxy Use. Those change pixels without
+/// changing the layer's own switches.
+pub fn with_scope(key: u64, inherited: Option<(Quality, bool)>, nested_switches: bool, proxy: ProxyUse) -> u64 {
+    let mut h = KeyHasher(key ^ 0x5343_4f50_4520_4b59);
+    inherited.hash(&mut h);
+    nested_switches.hash(&mut h);
+    proxy.hash(&mut h);
     h.finish()
 }

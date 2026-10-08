@@ -118,3 +118,37 @@ fn static_precomp_key_is_stable_across_time() {
     let b = cache::layer_key(&r.eval_ctx(cid, FrameRate::FPS_30.tick_of(12)).unwrap(), &p.comp(cid).unwrap().layers[0], 1.0, false, false);
     assert!(a.is_some() && a == b, "static precomp {a:?} vs {b:?}");
 }
+
+#[test]
+fn precomp_proxy_changes_the_layer_key() {
+    let mut p = Project::default();
+    p.settings.bit_depth = BitDepth::Bpc32;
+    let inner = Comp::new(16, 16, FrameRate::FPS_30, Tick::from_seconds_f64(1.0));
+    let iid = p.add_item("Inner", Label::Sandstone, None, ItemKind::Comp(inner.into()));
+    let outer = Comp::new(16, 16, FrameRate::FPS_30, Tick::from_seconds_f64(1.0));
+    let cid = p.add_item("Outer", Label::Sandstone, None, ItemKind::Comp(outer.clone().into()));
+    let pre = build::layer(&mut p, &outer, "Inner", LayerSource::Comp { item: iid }, (16, 16), None);
+    p.comp_mut(cid).unwrap().layers.push(pre);
+    let r = Renderer::new(&p, &Flat, RenderOpts::default());
+    let before = cache::layer_key(&r.eval_ctx(cid, Tick::ZERO).unwrap(), &p.comp(cid).unwrap().layers[0], 1.0, false, false);
+    p.item_mut(iid).unwrap().proxy = Some(Box::new(effectcraft_project::Proxy {
+        footage: Footage { path: "blue8.png".into(), kind: FootageKind::Still, width: 8, height: 8, has_video: true, ..Default::default() },
+        enabled: true,
+    }));
+    let r = Renderer::new(&p, &Flat, RenderOpts::default());
+    let after = cache::layer_key(&r.eval_ctx(cid, Tick::ZERO).unwrap(), &p.comp(cid).unwrap().layers[0], 1.0, false, false);
+    assert!(before.is_some() && after.is_some() && before != after, "proxy {before:?} vs {after:?}");
+}
+
+#[test]
+fn nested_switches_scope_changes_the_key() {
+    let k = 0x1111_2222_3333_4444;
+    let current = effectcraft_project::render_queue::ProxyUse::CurrentSettings;
+    let on = cache::with_scope(k, None, true, current);
+    let off = cache::with_scope(k, None, false, current);
+    let draft = cache::with_scope(k, Some((effectcraft_project::Quality::Draft, true)), true, current);
+    let none = cache::with_scope(k, None, true, effectcraft_project::render_queue::ProxyUse::UseNone);
+    assert_ne!(on, off);
+    assert_ne!(on, draft);
+    assert_ne!(on, none);
+}
