@@ -34,6 +34,10 @@ pub struct SorterFilters {
 }
 
 impl SorterFilters {
+    pub fn is_empty(&self) -> bool {
+        self.group.is_empty() && self.kind.is_empty() && self.governorate.is_empty() && self.category.is_empty() && self.search.is_empty()
+    }
+
     pub fn allows(&self, s: &Screen) -> bool {
         let hit = |want: &str, got: &str| want.is_empty() || normalize(got) == normalize(want);
         if !hit(&self.group, &s.group) || !hit(&self.kind, &s.kind) || !hit(&self.governorate, &s.governorate) || !hit(&self.category, &s.category) {
@@ -102,6 +106,9 @@ pub struct SorterRow {
     pub confidence: u32,
     pub reason: String,
     pub needs_review: bool,
+    /// Filters only hide rows. Hidden rows are still sent.
+    #[serde(default)]
+    pub hidden: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -117,7 +124,9 @@ pub struct SorterResult {
 
 pub fn sort_lines(lib: &Library, paste: &str, cleanup: bool, mode: MatchMode, filters: &SorterFilters, _send_all: bool) -> SorterResult {
     let lines = split_paste(paste, cleanup);
-    let inventory: Vec<&Screen> = lib.screens.iter().filter(|s| filters.allows(s)).collect();
+    // Match against the full inventory. Filters only hide rows in the panel;
+    // hidden screens are still sent to Screen Manager / Size Matcher.
+    let inventory: Vec<&Screen> = lib.screens.iter().collect();
     let mut hits = Vec::new();
     let mut unmatched = Vec::new();
     for (i, line) in lines.iter().enumerate() {
@@ -197,7 +206,10 @@ pub fn sort_lines(lib: &Library, paste: &str, cleanup: bool, mode: MatchMode, fi
             });
         }
     }
-    let rows = group_rows(&hits);
+    let mut rows = group_rows(&hits);
+    for row in &mut rows {
+        row.hidden = !filters.is_empty() && !row_visible(lib, row, filters);
+    }
     let paste_names_by_size: Vec<String> = rows.iter().map(|r| r.use_name.clone()).collect();
     let mut paste_names_screen_specific: Vec<String> = hits.iter().map(|h| h.screen.clone()).collect();
     paste_names_screen_specific.sort();
@@ -233,6 +245,7 @@ fn group_rows(hits: &[SorterHit]) -> Vec<SorterRow> {
                 confidence: conf,
                 reason,
                 needs_review: conf < 68,
+                hidden: false,
             }
         })
         .collect()
@@ -246,7 +259,7 @@ fn group_key(h: &SorterHit) -> (u32, u32, String) {
         return (h.width, h.height, format!("thuraya-{}", normalize(&h.screen)));
     }
     if is_avenues_entrance(&h.screen) {
-        return (h.width, h.height, format!("ave-{}", normalize(&h.screen)));
+        return (h.width, h.height, "avenues-entrance".into());
     }
     if is_yaal_slayel(&h.screen) {
         return (h.width, h.height, format!("yaal-{}", normalize(&h.screen)));
@@ -328,6 +341,11 @@ fn exact_alias(inv: &[&Screen], line: &str) -> Option<SorterHit> {
         "diamond" | "avenues diamond" | "the avenues diamond" => "the avenues diamond",
         "marina palms full" | "marina palm trees" => "marina palm trees",
         "piccadilly" => "piccadilly",
+        "grand avenues" | "grand avenues entrance" | "the avenues - grand avenues entrance" => "the avenues - grand avenues entrance",
+        "eye of kuwait" => "eye of kuwait",
+        "1st ring road" | "first ring road" => "1st ring road",
+        "al nassar tower" => "al nassar tower",
+        "al nassar tower vertical" => "al nassar tower vertical",
         "al salam sync" | "salam sync" => "al salam sync",
         "jahra prime" => "jahra prime",
         "salmiya express" => "salmiya express",
@@ -335,7 +353,15 @@ fn exact_alias(inv: &[&Screen], line: &str) -> Option<SorterHit> {
         "baitak" => "baitak",
         _ => return size_mode_alias(line).and_then(|n| inv.iter().find(|s| normalize(&s.name) == normalize(n)).map(|s| hit_of(s, 1.0, "Size-mode alias"))),
     };
-    inv.iter().find(|s| normalize(&s.name) == target || (target.contains("palm") && is_palm_trees(&s.name))).map(|s| hit_of(s, 1.0, "Sorter exact alias"))
+    inv.iter()
+        .find(|s| {
+            let n = normalize(&s.name);
+            n == target
+                || (target.contains("palm") && is_palm_trees(&s.name))
+                || (target.contains("eye of kuwait") && n.contains("eye of kuwait"))
+                || (target.contains("grand avenues") && is_avenues_entrance(&s.name) && n.contains("grand avenues"))
+        })
+        .map(|s| hit_of(s, 1.0, "Sorter exact alias"))
 }
 
 fn associated_group(inv: &[&Screen], line: &str) -> Option<Vec<SorterHit>> {
@@ -376,4 +402,20 @@ pub fn apply_flag_answers(result: &mut SorterResult, answers: &[(String, String,
 
 pub fn unresolved_flags(result: &SorterResult) -> usize {
     result.flags.iter().filter(|f| !f.answered).count()
+}
+
+fn row_visible(lib: &Library, row: &SorterRow, filters: &SorterFilters) -> bool {
+    if filters.is_empty() {
+        return true;
+    }
+    row.covers.iter().any(|n| lib.screen_by_name(n).is_some_and(|s| filters.allows(s)))
+}
+
+/// Names actually sent (filters never drop these).
+pub fn send_names(result: &SorterResult, screen_specific: bool) -> Vec<String> {
+    if screen_specific { result.paste_names_screen_specific.clone() } else { result.paste_names_by_size.clone() }
+}
+
+pub fn hidden_row_count(result: &SorterResult) -> usize {
+    result.rows.iter().filter(|r| r.hidden).count()
 }

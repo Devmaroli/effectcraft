@@ -1213,6 +1213,7 @@ Window
   Create Nulls From Paths | window.panel {"panel":"createNullsFromPaths"}
   VR Comp Editor | window.panel {"panel":"vrCompEditor"}
   Screen Suite | window.panel {"panel":"screenSuite"}
+  Screen Library | window.panel {"panel":"screenLibrary"}
   @dynamic:scriptPanels
 Help
   EffectCraft Help... | help.docs {"page":"help"} | F1

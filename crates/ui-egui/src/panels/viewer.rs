@@ -1547,11 +1547,22 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     // Effect point controls and crosshair/eyedropper picks (on top of the viewer's gestures).
     crate::panels::effect_controls::viewer_hook(app, ui, &painter, &map, &ectx, &|c, l| l2c(c, l).0);
 
-    // Status chips (render time / caching).
-    if app.playback.playing && app.playback.waiting {
-        let r = Rect::from_min_size(area.min + vec2(10.0, 10.0), vec2(150.0, 22.0));
+    // Status chips (achieved preview fps, GPU/CPU, caching) — like After Effects' Info panel,
+    // but on the viewer so it is visible without that panel open.
+    if app.playback.playing {
+        let gpu = if app.session.project.settings.gpu_acceleration && app.gpu_adapter().is_some() { "GPU" } else { "CPU" };
+        let (text, warn) = if app.playback.caching || app.playback.waiting {
+            (format!("Caching frames…  ·  {gpu}"), false)
+        } else if let (Some(fps), Some(rt)) = (app.playback.achieved_fps(), app.playback.real_time()) {
+            let note = if rt { "real-time" } else { "not real-time" };
+            (format!("{fps:.1} fps  ·  {note}  ·  {gpu}"), !rt)
+        } else {
+            (format!("Playing…  ·  {gpu}"), false)
+        };
+        let r = Rect::from_min_size(area.min + vec2(10.0, 10.0), vec2(268.0, 22.0));
         painter.rect_filled(r, 11.0, Color32::from_black_alpha(170));
-        painter.text(r.center(), Align2::CENTER_CENTER, "Caching frames…", Tokens::ui(11.5), t.cache_green);
+        painter.text(r.center(), Align2::CENTER_CENTER, &text, Tokens::ui(11.5), if warn { t.warning } else { t.cache_green });
+        app.auto.add("viewer.previewFps", r, &text);
     }
 
     vt::draw_snap(&ctx, &painter, &map, &ectx);

@@ -690,6 +690,32 @@ pub(crate) fn bottom_bar(app: &mut EffectcraftApp, ui: &mut egui::Ui, bar: Rect,
         let _ = app.session.execute("view.fastPreviewMode", json!({"mode": FastPreviews::ALL[i].id()}));
     }
     x += 4.0;
+    // Mercury GPU Acceleration (Project Settings ▸ Video Rendering and Effects). Click to toggle.
+    let gpu_on = app.session.project.settings.gpu_acceleration;
+    let gpu_live = gpu_on && app.gpu_adapter().is_some();
+    let gpu_label = if gpu_live {
+        "GPU"
+    } else if gpu_on {
+        "GPU*"
+    } else {
+        "CPU"
+    };
+    let gr = Rect::from_min_size(pos2(x, cy - 10.0), vec2(48.0, 20.0));
+    let tip = if gpu_live {
+        "Mercury GPU Acceleration is on. Click for Software Only."
+    } else if gpu_on {
+        "GPU acceleration is on, but this computer has no usable GPU. Click for Software Only."
+    } else {
+        "Software Only. Click to turn on Mercury GPU Acceleration."
+    };
+    if widgets::dropdown(ui, gr, gpu_label, &t, egui::Id::new("vw-gpu")).on_hover_text(tip).clicked() {
+        let backend = if gpu_on { "cpu" } else { "gpu" };
+        if let Err(e) = app.session.execute("render.backend", json!({"backend": backend})) {
+            app.ui.status = e.to_string();
+        }
+    }
+    app.auto.add("viewer.gpu", gr, gpu_label);
+    x = gr.max.x + 4.0;
     // 3D renderer + view.
     if comp.has_3d() {
         let r = Rect::from_min_size(pos2(x, cy - 10.0), vec2(96.0, 20.0));

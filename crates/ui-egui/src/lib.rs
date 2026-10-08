@@ -436,6 +436,7 @@ impl EffectcraftApp {
                 PanelKind::RenderQueue => PanelKind::Timeline,
                 PanelKind::EffectControls | PanelKind::History => PanelKind::Project,
                 PanelKind::ScreenSuite => PanelKind::Properties,
+                PanelKind::ScreenLibrary => PanelKind::ScreenSuite,
                 _ => PanelKind::EffectsPresets,
             };
             self.ui.dock.open_near(p, near);
@@ -711,6 +712,7 @@ impl EffectcraftApp {
             nested_switches: self.session.prefs.general.switches_affect_nested_comps,
             draft_shadows: self.session.prefs.three_d.realtime_shadows,
             proxy: Default::default(),
+            parallel: true,
         }
     }
 

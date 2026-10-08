@@ -216,6 +216,18 @@ fn auto_resolution_is_the_same_playing_and_paused() {
 }
 
 #[test]
+fn viewer_shows_preview_fps_and_gpu_toggle() {
+    let mut h = harness();
+    assert!(h.state().auto.find("viewer.gpu").is_some(), "GPU on/off control on the viewer bar");
+    invoke(&mut h, "playback.toggle", json!({}));
+    h.run_steps(4);
+    assert!(h.state().auto.find("viewer.previewFps").is_some(), "fps readout on the viewer while playing");
+    let on = h.state().session.project.settings.gpu_acceleration;
+    click(&mut h, "viewer.gpu");
+    assert_ne!(h.state().session.project.settings.gpu_acceleration, on, "clicking GPU toggles Mercury GPU Acceleration");
+}
+
+#[test]
 fn achieved_frame_rate_and_real_time() {
     let mut p = effectcraft_ui_egui::Playback { playing: true, fps: 24.0, ..Default::default() };
     assert_eq!(p.achieved_fps(), None);

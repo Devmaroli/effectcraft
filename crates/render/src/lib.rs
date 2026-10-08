@@ -40,6 +40,19 @@ use rayon::prelude::*;
 pub trait FootageSource: Send + Sync {
     /// The frame of `item` at source time `t`, straight from the file (any size).
     fn frame(&self, item: ItemId, footage: &Footage, t: Tick) -> Option<Arc<Image>>;
+    /// Like [`frame`], optionally already sized for a preview scale (1 = native pixels).
+    /// A smaller image still covers the footage's layer frame; the compositor places it.
+    /// Default: native [`frame`].
+    fn frame_scaled(&self, item: ItemId, footage: &Footage, t: Tick, scale: f64) -> Option<Arc<Image>> {
+        let _ = scale;
+        self.frame(item, footage, t)
+    }
+    /// How many movie frames to decode ahead of sequential playback (0 = none).
+    fn prefetch_depth(&self) -> usize {
+        0
+    }
+    /// Change the sequential read-ahead depth (sources without a decoder ignore it).
+    fn set_prefetch_depth(&self, _frames: usize) {}
     /// `frames` interleaved stereo sample frames of `item`'s audio from source time `t` at
     /// `rate` Hz (`None` when unavailable).
     fn audio(&self, _item: ItemId, _footage: &Footage, _t: Tick, _frames: usize, _rate: u32) -> Option<Vec<f32>> {
@@ -388,6 +401,9 @@ pub struct RenderOpts {
     pub nested_switches: bool,
     /// Realtime Shadows in Draft (Settings ▸ 3D): draft renders (`draft`) still cast shadows.
     pub draft_shadows: bool,
+    /// Bake independent 2D layers in parallel before blending them in order. Off compares
+    /// against a serial walk (tests) or measures the old path (`bench --dooh --serial`).
+    pub parallel: bool,
 }
 
 impl RenderOpts {
@@ -410,6 +426,7 @@ impl Default for RenderOpts {
             nested_switches: true,
             draft_shadows: true,
             proxy: effectcraft_project::render_queue::ProxyUse::CurrentSettings,
+            parallel: true,
         }
     }
 }
@@ -846,17 +863,93 @@ impl<'a> Renderer<'a> {
                 i = j;
                 self.pipe.quantize(canvas);
                 blank = false;
-            } else {
+            } else if !self.independent_2d(ctx, visible[i]) {
                 let changed = match self.collapsed(ctx, visible[i]) {
                     Some(item) => self.draw_collapsed(ctx, visible[i], item, canvas, blank),
                     None => self.draw_layer(ctx, visible[i], canvas, blank),
                 };
                 i += 1;
-                // 8/16 bpc: the comp is an integer buffer after every layer (only the pixels the
-                // layer touched need re-quantising).
+                self.pipe.quantize_region(canvas, changed);
+                blank = false;
+            } else {
+                let mut j = i + 1;
+                while j < visible.len() && self.independent_2d(ctx, visible[j]) {
+                    j += 1;
+                }
+                self.draw_2d_run(ctx, &visible[i..j], canvas, blank);
+                i = j;
+                blank = false;
+            }
+        }
+    }
+
+    /// A 2D layer whose source → effects buffer does not read the canvas (not an adjustment,
+    /// not a collapsed precomp, not a 3D layer). Those buffers can be baked in parallel.
+    fn independent_2d(&self, ctx: &EvalCtx<'a>, layer: &Layer) -> bool {
+        !layer.is_3d() && !layer.switches.adjustment && self.collapsed(ctx, layer).is_none() && self.quality(layer) != Quality::Wireframe
+    }
+
+    fn plate_key(&self, ctx: &EvalCtx<'a>, layers: &[&'a Layer], canvas: &Image) -> Option<u64> {
+        cache::plate_key(ctx, layers, self.opts.scale, canvas.width, canvas.height, self.opts.draft, self.opts.proxy, self.inherited)
+    }
+
+    /// Draw a run of independent 2D layers: reuse a cached static plate when the bottom of the
+    /// stack does not change from frame to frame, bake the rest in parallel, then blend in order.
+    fn draw_2d_run(&self, ctx: &EvalCtx<'a>, layers: &[&'a Layer], canvas: &mut Image, mut blank: bool) {
+        if layers.is_empty() {
+            return;
+        }
+        let mut start = 0;
+        if let (Some(cache), true) = (self.cache, layers.iter().any(|l| cache::layer_is_static(ctx, l))) {
+            let mut prefix = 0;
+            while prefix < layers.len() && cache::layer_is_static(ctx, layers[prefix]) {
+                prefix += 1;
+            }
+            if prefix > 0
+                && let Some(key) = self.plate_key(ctx, &layers[..prefix], canvas)
+                && let Some(plate) = cache.get(key)
+                && plate.img.width == canvas.width
+                && plate.img.height == canvas.height
+            {
+                canvas.data.clone_from(&plate.img.data);
+                start = prefix;
+                blank = false;
+                self.pipe.quantize(canvas);
+            } else if prefix > 0 {
+                for layer in &layers[..prefix] {
+                    let changed = self.draw_layer(ctx, layer, canvas, blank);
+                    self.pipe.quantize_region(canvas, changed);
+                    blank = false;
+                }
+                if let Some(key) = self.plate_key(ctx, &layers[..prefix], canvas) {
+                    cache.insert(key, Arc::new(Buf { img: canvas.clone(), offset: [0.0; 2], scale: self.opts.scale }));
+                }
+                start = prefix;
+            }
+        }
+        let rest = &layers[start..];
+        if rest.is_empty() {
+            return;
+        }
+        let parallel = self.opts.parallel && rest.len() >= 2;
+        if !parallel {
+            for layer in rest {
+                let changed = self.draw_layer(ctx, layer, canvas, blank);
                 self.pipe.quantize_region(canvas, changed);
                 blank = false;
             }
+            return;
+        }
+        let baked: Vec<Option<StyledLayer>> = rest.par_iter().map(|layer| self.styled_layer(ctx, layer)).collect();
+        for (layer, st) in rest.iter().zip(baked) {
+            let opacity = ctx.opacity(layer) as f32 * self.opacity_mul;
+            if opacity <= 0.0 {
+                continue;
+            }
+            let Some(st) = st else { continue };
+            let changed = self.composite_prepared(ctx, layer, &st, canvas, opacity, blank);
+            self.pipe.quantize_region(canvas, changed);
+            blank = false;
         }
     }
 
@@ -998,7 +1091,7 @@ impl<'a> Renderer<'a> {
                 if let Some(pf) = self.proxy_for(*item)
                     && let Some(nc) = self.project.comp(*item)
                 {
-                    let img = self.footage.frame(*item, pf, lt)?;
+                    let img = self.footage.frame_scaled(*item, pf, lt, self.opts.scale)?;
                     return Some(self.footage_buf(&img, pf, nc.width, nc.height));
                 }
                 // Essential Properties overrides render the nested comp with this instance's
@@ -1100,7 +1193,7 @@ impl<'a> Renderer<'a> {
         if f.fields != effectcraft_project::FieldOrder::Off && matches!(f.kind, FootageKind::Video | FootageKind::Sequence) {
             let field_rate = FrameRate::new(f.frame_rate.num * 2, f.frame_rate.den);
             let i = field_rate.frame_at(t).max(0);
-            let img = self.footage.frame(item, f, f.frame_rate.tick_of(i / 2))?;
+            let img = self.footage.frame_scaled(item, f, f.frame_rate.tick_of(i / 2), self.opts.scale)?;
             let dominant_upper = f.fields == effectcraft_project::FieldOrder::UpperFirst;
             // Upper field = even lines (0, 2, …).
             let parity = if (i % 2 == 0) == dominant_upper { 0 } else { 1 };
@@ -1127,8 +1220,8 @@ impl<'a> Renderer<'a> {
                 {
                     return Some(Arc::new(b.img.clone()));
                 }
-                let a = self.footage.frame(item, f, f.frame_rate.tick_of(i));
-                let b = self.footage.frame(item, f, f.frame_rate.tick_of(i + 1));
+                let a = self.footage.frame_scaled(item, f, f.frame_rate.tick_of(i), self.opts.scale);
+                let b = self.footage.frame_scaled(item, f, f.frame_rate.tick_of(i + 1), self.opts.scale);
                 if let (Some(a), Some(b)) = (a, b) {
                     let img = blend_frames(mode, &a, &b, w as f32);
                     if let (Some(c), Some(k)) = (self.cache, key) {
@@ -1138,7 +1231,7 @@ impl<'a> Renderer<'a> {
                 }
             }
         }
-        self.footage.frame(item, f, t)
+        self.footage.frame_scaled(item, f, t, self.opts.scale)
     }
 
     /// Source → masks, clamped/quantised to the project depth.
@@ -1606,13 +1699,7 @@ impl<'a> Renderer<'a> {
         let Some(st) = self.styled(ctx, layer, timing.as_mut()) else { return Region::Empty };
         let st = self.styled_to_blend(st);
         let t1 = web_time::Instant::now();
-        let changed = if st.plain {
-            self.composite_layer(ctx, layer, &st.body, canvas, opacity);
-            self.footprint(ctx, layer, &st.body, opacity, blank)
-        } else {
-            self.composite_styled(ctx, layer, &st, canvas, opacity);
-            Region::Full
-        };
+        let changed = self.composite_prepared(ctx, layer, &st, canvas, opacity, blank);
         if let (Some(prof), Some(mut timing)) = (self.profile, timing) {
             timing.process_ms = (t1 - t0).as_secs_f64() * 1e3;
             timing.composite_ms = t1.elapsed().as_secs_f64() * 1e3;
@@ -1621,6 +1708,17 @@ impl<'a> Renderer<'a> {
             }
         }
         changed
+    }
+
+    /// Blend a prepared layer buffer into `canvas` (the second half of [`Self::draw_layer`]).
+    fn composite_prepared(&self, ctx: &EvalCtx, layer: &Layer, st: &StyledLayer, canvas: &mut Image, opacity: f32, blank: bool) -> Region {
+        if st.plain {
+            self.composite_layer(ctx, layer, &st.body, canvas, opacity);
+            self.footprint(ctx, layer, &st.body, opacity, blank)
+        } else {
+            self.composite_styled(ctx, layer, st, canvas, opacity);
+            Region::Full
+        }
     }
 
     /// Composite a styled layer: exterior passes with their own modes, then the body with the
@@ -2052,6 +2150,8 @@ pub fn render_frame(project: &Project, comp: ItemId, t: Tick, scale: f64) -> Ima
 mod tests;
 #[cfg(test)]
 mod tests_auto;
+#[cfg(test)]
+mod tests_parallel;
 #[cfg(test)]
 mod tests_remap;
 #[cfg(test)]

@@ -15,6 +15,7 @@ pub mod camera_track;
 pub mod commands;
 pub mod config;
 pub mod demo;
+pub mod dooh;
 pub mod footage_check;
 pub mod guard;
 pub mod history;
@@ -275,7 +276,7 @@ pub struct EditorState {
     /// View ▸ Split with New Locked Viewer: the second viewer's comp and 3D view.
     #[serde(default)]
     pub locked_viewer: Option<commands::viewer_cmds::LockedViewer>,
-    /// Window ▸ Screen Suite (booking, build, adapter, deliver, QC).
+    /// Window ▸ Screen Suite (Size Sorter, Screen Manager, Size Matcher, Screen Library).
     #[serde(default)]
     pub screen: commands::screen::ScreenSuiteState,
 }
