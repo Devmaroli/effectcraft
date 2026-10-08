@@ -22,20 +22,28 @@ pub(crate) fn panel<'a>(app: &EffectcraftApp, en: &'a str) -> &'a str {
 const PANEL_JA: &[(&str, &str)] = &[
     ("Ligatures", "合字"),
     ("Arabic fallback", "アラビア語フォールバック"),
+    ("Used for Arabic letters {font} doesn't have.", "{font} にないアラビア文字に使います。"),
     ("Digits", "数字"),
     ("Western (50)", "西欧数字 (50)"),
     ("Arabic-Indic (٥٠)", "アラビア数字 (٥٠)"),
+    ("How typed 0-9 are drawn in the selection.", "選択範囲の 0–9 の字形。"),
     ("Keep Arabic letters joined", "アラビア文字の接続を維持"),
+    ("Tracking stretches Arabic words with kashida.", "トラッキングはカシダでアラビア語を伸ばします。"),
+    ("Direction", "方向"),
     ("LTR", "LTR"),
     ("RTL", "RTL"),
     ("Auto", "自動"),
+    ("Auto: first strong letter sets the direction.", "自動: 最初の強い文字で方向を決めます。"),
     ("Roman Hanging Punctuation", "欧文ぶら下げ"),
     ("Stretch with kashida (ـ)", "カシダで揃える (ـ)"),
     ("All", "すべて"),
     ("Arabic", "アラビア語"),
     ("No Arabic · uses fallback", "アラビア語なし · フォールバック"),
     ("Search fonts", "フォントを検索"),
+    ("Recent", "最近"),
+    ("All fonts", "すべてのフォント"),
     ("Characters (keep joins)", "文字（接続を維持）"),
+    ("NEW", "NEW"),
 ];
 
 pub(crate) fn entry(app: &EffectcraftApp, e: &MenuEntry, shown: String) -> String {

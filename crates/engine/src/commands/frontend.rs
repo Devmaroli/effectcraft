@@ -86,7 +86,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Show Panel",
             [],
             None,
-            "{panel: project|effectControls|composition|layer|timeline|info|audio|preview|effectsPresets|properties|character|paragraph|align|tracker|wiggler|smoother|motionSketch|paint|brushes|renderQueue|flowchart|history|markers|tools|lumetriScopes|footage|mediaBrowser|metadata|progress|contentAwareFill|createNullsFromPaths|vrCompEditor|screenSuite|screenLibrary}",
+            "{panel: project|effectControls|composition|layer|timeline|info|audio|preview|effectsPresets|properties|character|paragraph|align|tracker|wiggler|smoother|motionSketch|paint|brushes|renderQueue|flowchart|history|markers|tools|lumetriScopes|footage|mediaBrowser|metadata|progress|contentAwareFill|createNullsFromPaths|vrCompEditor|screenSuite|screenLibrary, float?: bool, rect?: [x,y,w,h]}",
             always
         ),
         fe!(

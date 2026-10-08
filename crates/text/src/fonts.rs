@@ -25,6 +25,7 @@ pub static INTER_BOLD: &[u8] = include_bytes!("../../../assets/fonts/Inter-Bold.
 pub static INTER_ITALIC: &[u8] = include_bytes!("../../../assets/fonts/Inter-Italic.ttf");
 pub static JETBRAINS_MONO_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/JetBrainsMono-Regular.ttf");
 pub static NOTO_SERIF_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/NotoSerif-Regular.ttf");
+pub static NOTO_NASKH_ARABIC_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/NotoNaskhArabic-Regular.ttf");
 
 /// The default family for new text.
 pub const DEFAULT_FAMILY: &str = "Inter";
@@ -267,7 +268,8 @@ fn db() -> &'static RwLock<Db> {
     static DB: OnceLock<RwLock<Db>> = OnceLock::new();
     DB.get_or_init(|| {
         let mut db = Db { faces: Vec::new(), scanned: false };
-        for b in [INTER_REGULAR, INTER_MEDIUM, INTER_SEMIBOLD, INTER_BOLD, INTER_ITALIC, JETBRAINS_MONO_REGULAR, NOTO_SERIF_REGULAR] {
+        for b in [INTER_REGULAR, INTER_MEDIUM, INTER_SEMIBOLD, INTER_BOLD, INTER_ITALIC, JETBRAINS_MONO_REGULAR, NOTO_SERIF_REGULAR, NOTO_NASKH_ARABIC_REGULAR]
+        {
             for n in read_faces_bytes(b) {
                 push(&mut db, info_from(n, FaceData::Static(b), "bundled"));
             }
@@ -679,7 +681,9 @@ mod tests {
             assert!(inter.1.iter().any(|x| x == s), "{s} in {:?}", inter.1);
         }
         assert!(fams.iter().any(|(f, _)| f == "Noto Serif"));
+        assert!(fams.iter().any(|(f, _)| f == "Noto Naskh Arabic"));
         assert!(fams.iter().any(|(f, _)| f == "JetBrains Mono"));
+        assert_eq!(crate::arabic::arabic_quality(resolve("Noto Naskh Arabic", "Regular").face), crate::arabic::ArabicQuality::Good);
         let b = resolve("inter", "bold");
         assert_eq!(face(b.face).info.style, "Bold");
         assert!(!b.synth_bold);

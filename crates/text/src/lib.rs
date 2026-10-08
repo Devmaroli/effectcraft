@@ -667,6 +667,30 @@ mod tests {
     }
 
     #[test]
+    fn arabic_fallback_draws_naskh_while_english_stays_inter() {
+        let t = "خصم Hello";
+        let l = layout_doc(&TextDoc {
+            text: t.into(),
+            font: "Inter".into(),
+            size: 40.0,
+            arabic_fallback: "Noto Naskh Arabic".into(),
+            direction: Direction::Auto,
+            ..Default::default()
+        });
+        let inter = fonts::resolve("Inter", "Regular").face;
+        let naskh = fonts::resolve("Noto Naskh Arabic", "Regular");
+        assert!(!naskh.missing, "bundled Noto Naskh Arabic");
+        for g in &l.glyphs {
+            if crate::arabic::is_arabic_letter(g.ch) {
+                assert_eq!(g.face, naskh.face, "Arabic {} on fallback, not Inter", g.ch);
+            }
+            if g.ch.is_ascii_alphabetic() {
+                assert_eq!(g.face, inter, "Latin {} stays Inter", g.ch);
+            }
+        }
+    }
+
+    #[test]
     fn latin_layout_unchanged_with_new_optional_fields() {
         let t = "The Avenues 2026 — 50% OFF everything";
         let old = layout_doc(&TextDoc { text: t.into(), font: "Inter".into(), size: 48.0, ..Default::default() });

@@ -837,7 +837,13 @@ pub fn frontend(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str, p: Valu
             app.show_panel(panel);
             if p.get("float").and_then(Value::as_bool).unwrap_or(false) {
                 let screen = ctx.content_rect();
-                let rect = if panel == PanelKind::ScreenLibrary {
+                let num = |arr: &[serde_json::Value], i: usize| arr.get(i).and_then(Value::as_f64).map(|v| v as f32);
+                let rect = if let Some(arr) = p.get("rect").and_then(Value::as_array) {
+                    match (num(arr, 0), num(arr, 1), num(arr, 2), num(arr, 3)) {
+                        (Some(x), Some(y), Some(w), Some(h)) => [x, y, w, h],
+                        _ => crate::dock_ui::default_float_rect(screen),
+                    }
+                } else if panel == PanelKind::ScreenLibrary {
                     let c = screen.center();
                     [c.x - 620.0, c.y - 380.0, 1240.0, 760.0]
                 } else {

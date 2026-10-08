@@ -261,4 +261,14 @@ fn paragraph_direction_is_always_visible_and_ime_commits_arabic() {
     h.input_mut().events.push(Event::Ime(egui::ImeEvent::Commit("خصم".into())));
     h.run_steps(3);
     assert!(edited(&h).1.contains("خصم"), "IME commit inserted Arabic: {}", edited(&h).1);
+    let rtl = rect(&h, "paragraph.direction.rtl").center();
+    click(&mut h, rtl, Modifiers::NONE);
+    h.run_steps(3);
+    assert!(h.state().auto.find("paragraph.kashidaJustify").is_some(), "kashida checkbox for RTL");
+    let font = rect(&h, "character.font").center();
+    click(&mut h, font, Modifiers::NONE);
+    h.run_steps(4);
+    for id in ["character.font.filter", "character.font.filter.all", "character.font.filter.arabic", "character.font.filter.star", "character.font.search"] {
+        assert!(h.state().auto.find(id).is_some(), "font menu missing {id}");
+    }
 }

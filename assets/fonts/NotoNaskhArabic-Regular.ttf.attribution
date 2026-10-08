@@ -1,0 +1,8 @@
+asset:        NotoNaskhArabic-Regular.ttf
+title:        Noto Naskh Arabic Regular (default Arabic fallback for the text engine)
+author:       The Noto Project Authors
+source:       https://github.com/notofonts/notofonts.github.io (fonts/NotoNaskhArabic/hinted/ttf)
+license:      OFL-1.1
+license-file: assets/fonts/OFL-NotoNaskhArabic.txt
+added:        2026-10-08 by Cursor Grok 4.6 (agent)
+notes:        Unmodified hinted Regular TTF. Embedded via include_bytes! in crates/text/src/fonts.rs so Arabic runs have a real Naskh face when the main font is Latin-first (Inter) or the machine has no Dubai / system Arabic font.
