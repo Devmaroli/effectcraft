@@ -289,11 +289,11 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
             opt_total += w + 4.0;
         }
     }
-    // Label + gaps to the right of Name. Leftover panel width grows Name first; Type/Size/…
-    // keep their stored widths and scroll when they no longer fit.
-    let chrome = 14.0 + 18.0 + 16.0 + 8.0;
+    // Label + optional columns. Leftover panel width grows Name first; Type/Size/… keep
+    // their stored widths and scroll when they no longer fit.
+    let other = 14.0 + 18.0 + 16.0 + opt_total + 8.0;
     let stored_name = project_cols::stored_width(&app.ui.project_col_widths, "name", project_cols::NAME_DEFAULT);
-    let name_w = project_cols::name_width(rect.width(), stored_name, chrome);
+    let name_w = project_cols::name_width(rect.width(), stored_name, other);
     let label_x = rect.min.x + name_w + 14.0;
     let mut cols: Vec<(&'static str, &'static str, f32, f32)> = vec![("name", "Name", rect.min.x + 26.0, name_w - 26.0), ("label", "", label_x - 8.0, 18.0)];
     // Optional columns wider than the panel scroll horizontally under the frozen Name and Label

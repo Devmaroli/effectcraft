@@ -31,11 +31,11 @@ pub fn resize_width(current: f32, delta: f32, min: f32, max: f32) -> f32 {
     (current + delta).clamp(min, max)
 }
 
-/// Extra space after the Label chrome (not the optional Type/Size columns) goes to Name.
-/// Widening the panel therefore lengthens the names; optional columns keep their stored
-/// widths and scroll when they no longer fit.
-pub fn name_width(panel_w: f32, stored_name: f32, chrome: f32) -> f32 {
-    stored_name.max(panel_w - chrome).max(NAME_MIN)
+/// Extra space after Label and the optional columns (Type, Size, …) goes to Name.
+/// Widening the panel therefore lengthens the names once those columns fit; they keep
+/// their stored widths and scroll when the panel is still too narrow.
+pub fn name_width(panel_w: f32, stored_name: f32, other: f32) -> f32 {
+    stored_name.max(panel_w - other).max(NAME_MIN)
 }
 
 /// How far the optional columns overflow the panel to the right of `opt_x0`.
@@ -213,11 +213,10 @@ mod tests {
 
     #[test]
     fn name_column_grows_with_the_panel_first() {
-        let chrome = 56.0;
-        assert_eq!(name_width(500.0, 160.0, chrome), 444.0);
-        assert_eq!(name_width(300.0, 160.0, chrome), 244.0);
-        assert_eq!(name_width(200.0, 160.0, chrome), 160.0);
-        assert!(name_width(100.0, 40.0, chrome) >= NAME_MIN);
+        assert_eq!(name_width(500.0, 160.0, 200.0), 300.0);
+        assert_eq!(name_width(300.0, 160.0, 200.0), 160.0);
+        assert_eq!(name_width(200.0, 160.0, 200.0), 160.0);
+        assert!(name_width(100.0, 40.0, 80.0) >= NAME_MIN);
         assert_eq!(optional_overflow(400.0, 300.0), 104.0);
         assert_eq!(optional_overflow(300.0, 300.0), 4.0);
         assert_eq!(optional_overflow(200.0, 300.0), 0.0);
