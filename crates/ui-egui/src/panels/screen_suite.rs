@@ -1,5 +1,6 @@
 //! Window ▸ Screen Suite — Option 1 tool rail (v2): Size Sorter → Screen Manager → EncodeCraft.
 
+use effectcraft_engine::commands::screen::apply_source;
 use effectcraft_screens::sorter::{hidden_row_count, row_size_text};
 use effectcraft_screens::{AlertLevel, CompNameFrom, JobMode, MatchMode, PanelAlert, collect_alerts, default_send_preset, tab_alert_count};
 use egui::{Align, Color32, CornerRadius, FontId, Layout, Rect, RichText, Sense, Stroke, Vec2, pos2};
@@ -758,11 +759,27 @@ fn manager_tab(app: &mut EffectcraftApp, ui: &mut egui::Ui, alerts: &[PanelAlert
         );
     }
     naming_block(app, ui);
+    ui.add_space(4.0);
+    let source = apply_source(&app.session);
+    match &source {
+        Some(src) => {
+            let line = format!("Source: {}", src.name);
+            let r = ui.label(RichText::new(&line).small().color(Color32::from_rgb(0xcd, 0xee, 0xd6)));
+            app.auto.add("screenSuite.source", r.rect, &src.name);
+        }
+        None => {
+            let r = ui.label(RichText::new("Select a comp or footage in the Project panel first").small().color(Color32::from_rgb(0xff, 0xd7, 0x9a)));
+            app.auto.add("screenSuite.source.missing", r.rect, "no source");
+        }
+    }
     let issues = m.matches.iter().filter(|r| r.status != "ok").count();
     let locked = app.session.state.screen.job_mode == JobMode::ScreenSpecific && issues > 0;
     ui.add_space(6.0);
     if locked {
         ui.add_enabled(false, egui::Button::new(format!("Apply locked · {issues} issues to resolve")));
+    } else if source.is_none() {
+        let r = ui.add_enabled(false, egui::Button::new("Apply to Footage"));
+        app.auto.add("screenSuite.apply", r.rect, "Apply to Footage");
     } else if auto_btn(app, ui, "screenSuite.apply", "Apply to Footage") {
         exec(app, "screen.manager.apply", naming_params(app));
     }

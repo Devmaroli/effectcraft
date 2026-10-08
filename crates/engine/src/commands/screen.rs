@@ -3,7 +3,9 @@
 //! Commands are `screen.*`. Comp fps is always 25. Combiner extra-stack warnings live on
 //! [`effectcraft_screens::DupWarning`].
 
-use effectcraft_project::{ItemId, ItemKind};
+use std::sync::Arc;
+
+use effectcraft_project::{FootageKind, ItemId, ItemKind, LayerSource, Project};
 use effectcraft_screens::combiner::{CombinerLayout, unique_source_slots};
 use effectcraft_screens::inventory::{Combiner, CombinerColumn, duration_for};
 use effectcraft_screens::library_edit::{self, ImportPreview};
@@ -433,7 +435,10 @@ fn manager_apply(s: &mut Session, p: &Value) -> Result<Value> {
     if s.state.screen.job_mode == JobMode::ScreenSpecific && s.state.screen.manager.matches.iter().any(|m| m.status != "ok") {
         return Err(bad("screen.manager.apply", "Apply locked — resolve missing screens and size mismatches in the Screen library first"));
     }
-    let footage = selected_footage(s);
+    let source = apply_source(s).ok_or_else(|| bad("screen.manager.apply", "Select a comp or footage in the Project panel first"))?;
+    let before = s.project.clone();
+    let undo_at = s.history.undo.len();
+    let saved_sel = s.state.project_selection.clone();
     let mut taken: Vec<String> = s.project.items.values().map(|i| i.name.clone()).collect();
     let suffixes = suffix_variants(&s.state.screen.suffix);
     for name in &selected {
@@ -453,9 +458,8 @@ fn manager_apply(s: &mut Session, p: &Value) -> Result<Value> {
         } else {
             duration_for(name, &group, false)
         };
-        let foot = match_footage_for_screen(name, w, h, &footage);
         for suf in &suffixes {
-            let base = compose_comp_name(s.state.screen.name_from, name, foot.as_ref().map(|f| f.stem.as_str()), &s.state.screen.prefix, suf);
+            let base = compose_comp_name(s.state.screen.name_from, name, Some(source.stem.as_str()), &s.state.screen.prefix, suf);
             let (comp_name, clash) = unique_comp_name(&base, &taken);
             if clash {
                 s.state.screen.sorter.flags.push(effectcraft_screens::sorter::SorterFlag {
@@ -471,53 +475,104 @@ fn manager_apply(s: &mut Session, p: &Value) -> Result<Value> {
             }
             let id = ensure_preset_comp(s, &comp_name, w, h, dur)?;
             taken.push(comp_name.clone());
-            if let Some(f) = &foot {
-                let _ = s.execute("layer.addItem", json!({"comp": id.0, "item": f.id.0, "time": 0.0}));
-            }
+            place_source_in_comp(s, id, &source, w, h, dur)?;
             created
                 .push(json!({"name": comp_name, "screen": name, "comp": id.0, "width": w, "height": h, "duration": dur, "fps": 25.0, "footageRenamed": false}));
         }
     }
     let combined = combine_active(s, p)?;
+    s.state.project_selection = saved_sel;
+    collapse_undo(s, before, undo_at, "Apply Screen Manager");
     set_tab(s, if size_master { "sizeMaster" } else { "build" });
-    Ok(json!({"created": created, "combiners": combined}))
+    Ok(json!({"created": created, "combiners": combined, "source": source.name}))
 }
 
-struct FootagePick {
-    id: ItemId,
-    stem: String,
-    width: u32,
-    height: u32,
-    name: String,
+/// Footage or composition Screen Manager will place into each created screen comp.
+#[derive(Clone, Debug)]
+pub struct ApplySource {
+    pub id: ItemId,
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+    pub stem: String,
+    pub still: bool,
 }
 
-fn selected_footage(s: &Session) -> Vec<FootagePick> {
-    s.state
-        .project_selection
-        .iter()
-        .filter_map(|id| {
-            let item = s.project.item(*id)?;
-            match &item.kind {
-                ItemKind::Footage(f) => {
-                    Some(FootagePick { id: *id, stem: material_stem(&item.name), width: f.width, height: f.height, name: item.name.clone() })
-                }
-                _ => None,
-            }
-        })
-        .collect()
+/// Selected Project-panel footage or composition, else the active composition.
+pub fn apply_source(s: &Session) -> Option<ApplySource> {
+    for id in &s.state.project_selection {
+        if let Some(src) = source_from_item(s, *id) {
+            return Some(src);
+        }
+    }
+    s.active_comp_id().and_then(|id| source_from_item(s, id))
 }
 
-fn match_footage_for_screen<'a>(screen: &str, w: u32, h: u32, footage: &'a [FootagePick]) -> Option<&'a FootagePick> {
-    let size_ok = |f: &FootagePick| f.width.abs_diff(w) <= 10 && f.height.abs_diff(h) <= 10;
-    footage
-        .iter()
-        .filter(|f| size_ok(f) && (effectcraft_screens::names_match_90(screen, &f.name) || effectcraft_screens::names_match_90(screen, &f.stem)))
-        .max_by(|a, b| {
-            let sa = effectcraft_screens::token_score(screen, &a.stem);
-            let sb = effectcraft_screens::token_score(screen, &b.stem);
-            sa.partial_cmp(&sb).unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .or_else(|| footage.iter().find(|f| size_ok(f)))
+fn source_from_item(s: &Session, id: ItemId) -> Option<ApplySource> {
+    let item = s.project.item(id)?;
+    match &item.kind {
+        ItemKind::Footage(f) if matches!(f.kind, FootageKind::Video | FootageKind::Still | FootageKind::Sequence) => Some(ApplySource {
+            id,
+            name: item.name.clone(),
+            width: f.width.max(1),
+            height: f.height.max(1),
+            stem: material_stem(&item.name),
+            still: f.kind == FootageKind::Still,
+        }),
+        ItemKind::Comp(c) => {
+            Some(ApplySource { id, name: item.name.clone(), width: c.width.max(1), height: c.height.max(1), stem: material_stem(&item.name), still: false })
+        }
+        _ => None,
+    }
+}
+
+fn layer_refs_item(l: &effectcraft_project::Layer, id: ItemId) -> bool {
+    match l.source {
+        LayerSource::Footage { item } | LayerSource::Comp { item } | LayerSource::Solid { item } => item == id,
+        _ => false,
+    }
+}
+
+fn place_source_in_comp(s: &mut Session, cid: ItemId, src: &ApplySource, dst_w: u32, dst_h: u32, duration_s: f64) -> Result<()> {
+    if cid == src.id {
+        return Err(bad("screen.manager.apply", "a composition can't contain itself"));
+    }
+    if s.project.comp(cid).is_some_and(|c| c.layers.iter().any(|l| layer_refs_item(l, src.id))) {
+        return Ok(());
+    }
+    let added = s.execute("layer.addItem", json!({"comp": cid.0, "item": src.id.0, "time": 0.0}))?;
+    let lid = added.get("layer").and_then(Value::as_u64).ok_or_else(|| EngineError::Other("layer.addItem returned no layer".into()))?;
+    fit_source_layer(s, cid, lid, src.width, src.height, dst_w, dst_h)?;
+    if !src.still && duration_s > 0.0 {
+        let _ = s.execute("layer.timeStretch", json!({"comp": cid.0, "layers": [lid], "duration": duration_s}));
+    }
+    Ok(())
+}
+
+fn fit_source_layer(s: &mut Session, cid: ItemId, lid: u64, src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -> Result<()> {
+    let sw = f64::from(src_w.max(1));
+    let sh = f64::from(src_h.max(1));
+    let dw = f64::from(dst_w.max(1));
+    let dh = f64::from(dst_h.max(1));
+    let (sx, sy) = if (sw - dw).abs() <= 3.0 && (sh - dh).abs() <= 3.0 {
+        (dw / sw * 100.0, dh / sh * 100.0)
+    } else {
+        let u = (dw / sw).max(dh / sh) * 100.0;
+        (u, u)
+    };
+    s.execute("prop.set", json!({"comp": cid.0, "layer": lid, "path": "transform/anchor", "value": [sw / 2.0, sh / 2.0, 0.0]}))?;
+    s.execute("prop.set", json!({"comp": cid.0, "layer": lid, "path": "transform/scale", "value": [sx, sy, 100.0]}))?;
+    s.execute("prop.set", json!({"comp": cid.0, "layer": lid, "path": "transform/position", "value": [dw / 2.0, dh / 2.0, 0.0]}))?;
+    Ok(())
+}
+
+fn collapse_undo(s: &mut Session, before: Arc<Project>, undo_at: usize, label: &str) {
+    if s.history.undo.len() <= undo_at {
+        return;
+    }
+    s.history.undo.truncate(undo_at);
+    let levels = s.prefs.general.undo_levels.max(1) as usize;
+    s.history.record(label, before, levels);
 }
 
 fn source_ids_for_column(s: &Session, col: &CombinerColumn, combined_w: u32, combined_h: u32) -> Vec<ItemId> {
@@ -562,11 +617,15 @@ fn combine_active(s: &mut Session, p: &Value) -> Result<Value> {
         }
         sources.sort_by_key(|id| id.0);
         sources.dedup();
+        if sources.is_empty() {
+            if let Some(fb) = apply_source(s) {
+                sources.push(fb.id);
+            } else {
+                continue;
+            }
+        }
         let unique = extra_force.unwrap_or_else(|| (sources.len() as u32).max(unique_source_slots(c)));
         let lay = CombinerLayout::from_unique_sources(c, unique);
-        if sources.is_empty() {
-            continue;
-        }
         if let Some(existing) =
             s.project.items.values().find(|i| i.name == c.name && i.as_comp().is_some_and(|cc| cc.width == lay.width && cc.height == lay.height))
         {
@@ -690,6 +749,13 @@ fn suite_state(s: &mut Session, _: &Value) -> Result<Value> {
     let mut v = serde_json::to_value(&s.state.screen).map_err(|e| EngineError::Other(e.to_string()))?;
     if let Some(obj) = v.as_object_mut() {
         obj.insert("alerts".into(), serde_json::to_value(current_alerts(s)).map_err(|e| EngineError::Other(e.to_string()))?);
+        obj.insert(
+            "source".into(),
+            match apply_source(s) {
+                Some(src) => json!({"id": src.id.0, "name": src.name, "width": src.width, "height": src.height}),
+                None => Value::Null,
+            },
+        );
     }
     Ok(v)
 }
@@ -1146,9 +1212,43 @@ mod tests {
         Session::new()
     }
 
+    fn plate(s: &mut Session) -> ItemId {
+        let r = s.execute("comp.new", json!({"name": "Master", "width": 1920, "height": 1080, "duration": 8, "frameRate": 25.0})).unwrap();
+        let id = ItemId(r["comp"].as_u64().unwrap());
+        s.execute("layer.newSolid", json!({"name": "Artwork", "color": "#e23d28", "width": 1920, "height": 1080})).unwrap();
+        s.state.project_selection = vec![id];
+        id
+    }
+
+    fn add_footage(s: &mut Session, name: &str, w: u32, h: u32) -> ItemId {
+        let f = effectcraft_project::Footage {
+            path: format!("{name}.mp4"),
+            kind: FootageKind::Video,
+            width: w,
+            height: h,
+            duration: effectcraft_time::Tick::from_seconds_f64(8.0),
+            has_video: true,
+            frame_rate: effectcraft_time::FrameRate::FPS_25,
+            ..Default::default()
+        };
+        Arc::make_mut(&mut s.project).add_item(name, effectcraft_color::Label::Aqua, None, ItemKind::Footage(f))
+    }
+
+    fn layer_item(s: &Session, cid: ItemId) -> Option<ItemId> {
+        s.project.comp(cid)?.layers.first().and_then(|l| match l.source {
+            LayerSource::Footage { item } | LayerSource::Comp { item } | LayerSource::Solid { item } => Some(item),
+            _ => None,
+        })
+    }
+
+    fn scale_of(s: &Session, cid: ItemId) -> Vec<f64> {
+        s.project.comp(cid).and_then(|c| c.layers.first()).and_then(|l| l.props.prop("transform/scale")).map(|p| p.value.components()).unwrap_or_default()
+    }
+
     #[test]
     fn spring_sale_sorter_sends_to_manager_and_matcher() {
         let mut s = session();
+        plate(&mut s);
         let paste = "1.7HD\nAl Salam Sync\nPiccadilly\nBaitak\nDiamond\nGhost Screen That Does Not Exist";
         s.execute("screen.sorter.sort", json!({"paste": paste, "cleanup": true, "matchMode": "flexible"})).unwrap();
         assert!(s.state.screen.sorter.hits.iter().any(|h| h.screen.contains("Al Salam")));
@@ -1183,6 +1283,7 @@ mod tests {
     #[test]
     fn palm_trees_combiner_four_faces_edge_to_edge() {
         let mut s = session();
+        plate(&mut s);
         s.execute("screen.manager.select", json!({"names": ["Marina - Palm Trees"], "jobMode": "bySize"})).unwrap();
         s.execute("screen.manager.apply", json!({"combiner": "Marina_Palms_Full"})).unwrap();
         let item = s.project.items.values().find(|i| i.name.contains("Palms") && i.as_comp().is_some()).expect("combined palms");
@@ -1205,6 +1306,7 @@ mod tests {
     #[test]
     fn al_salam_normal_combine_no_warning_extra_warns() {
         let mut s = session();
+        plate(&mut s);
         s.execute("screen.manager.select", json!({"names": ["Al Salam Sync"], "jobMode": "bySize"})).unwrap();
         s.execute("screen.manager.apply", json!({"combiner": "Al_Salam_Sync"})).unwrap();
         let combined = s.project.items.values().find(|i| i.name.contains("Al_Salam") && i.as_comp().is_some_and(|c| c.width == 3072)).expect("combined");
@@ -1249,6 +1351,7 @@ mod tests {
     #[test]
     fn live_update_diffs_and_orphans_never_auto_delete() {
         let mut s = session();
+        plate(&mut s);
         s.execute("screen.sorter.sort", json!({"paste": "1.7HD\nTop Gear\nPiccadilly", "cleanup": true})).unwrap();
         s.execute("screen.sorter.send", json!({"screenSpecific": false})).unwrap();
         s.execute("screen.manager.apply", json!({"prefix": "SpringSale", "suffix": "EN"})).unwrap();
@@ -1268,6 +1371,7 @@ mod tests {
     #[test]
     fn prefix_suffix_and_material_names_never_rename_footage() {
         let mut s = session();
+        plate(&mut s);
         s.execute("screen.manager.select", json!({"names": ["Piccadilly"], "jobMode": "bySize"})).unwrap();
         s.execute("screen.suite.naming", json!({"prefix": "SpringSale", "suffix": "EN, AR"})).unwrap();
         let r = s.execute("screen.manager.apply", json!({"prefix": "SpringSale", "suffix": "EN, AR"})).unwrap();
@@ -1283,6 +1387,7 @@ mod tests {
     #[test]
     fn matcher_send_locked_until_pass() {
         let mut s = session();
+        plate(&mut s);
         s.execute("screen.sorter.sort", json!({"paste": "Al Salam Sync", "cleanup": true})).unwrap();
         s.execute("screen.sorter.send", json!({"to": "matcher"})).unwrap();
         assert_eq!(s.state.screen.tab, "qc");
@@ -1307,5 +1412,119 @@ mod tests {
         s.execute("screen.library.undo", json!({})).unwrap();
         let open = s.execute("screen.library.open", json!({})).unwrap();
         assert!(open["merged"].as_array().is_some());
+    }
+
+    fn assert_fitted_source(s: &Session, cid: ItemId, src: ItemId, src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) {
+        let c = s.project.comp(cid).expect("created screen comp");
+        assert_eq!((c.width, c.height), (dst_w, dst_h));
+        assert!((c.frame_rate.as_f64() - 25.0).abs() < 0.01);
+        assert_eq!(layer_item(s, cid), Some(src), "created comp must contain the source");
+        let sc = scale_of(s, cid);
+        let cover = (dst_w as f64 / src_w as f64).max(dst_h as f64 / src_h as f64) * 100.0;
+        assert!(sc.len() >= 2, "{sc:?}");
+        assert!((sc[0] - cover).abs() < 0.6, "scale x {} vs cover {cover}", sc[0]);
+        assert!((sc[1] - cover).abs() < 0.6, "scale y {} vs cover {cover}", sc[1]);
+    }
+
+    fn save_frame(s: &Session, cid: ItemId, path: &str) {
+        let t = effectcraft_time::Tick::from_seconds_f64(1.0);
+        let (w, h, rgba) = s.render_rgba8(cid, t, 960).unwrap();
+        let png = crate::commands::comp_more::encode_png(&rgba, w, h).unwrap();
+        std::fs::write(path, png).unwrap();
+    }
+
+    #[test]
+    fn manager_apply_places_selected_comp_fitted() {
+        let mut s = session();
+        let src = plate(&mut s);
+        s.execute("screen.manager.select", json!({"names": ["Al Salam Sync", "Piccadilly"], "jobMode": "bySize"})).unwrap();
+        let r = s.execute("screen.manager.apply", json!({"prefix": "Honor", "suffix": "EN"})).unwrap();
+        assert_eq!(r["source"], "Master");
+        let created = r["created"].as_array().unwrap();
+        assert_eq!(created.len(), 2, "{r}");
+        for row in created {
+            let id = ItemId(row["comp"].as_u64().unwrap());
+            let w = row["width"].as_u64().unwrap() as u32;
+            let h = row["height"].as_u64().unwrap() as u32;
+            assert_fitted_source(&s, id, src, 1920, 1080, w, h);
+        }
+        let dir = "/cursor/stores/self/arabic-text";
+        let _ = std::fs::create_dir_all(dir);
+        let _ = std::fs::create_dir_all("/opt/cursor/artifacts/arabic-text");
+        for row in created {
+            let id = ItemId(row["comp"].as_u64().unwrap());
+            let slug = row["name"].as_str().unwrap().replace(' ', "_");
+            save_frame(&s, id, &format!("{dir}/screen-manager-after-{slug}.png"));
+            save_frame(&s, id, &format!("/opt/cursor/artifacts/arabic-text/screen-manager-after-{slug}.png"));
+        }
+        s.undo();
+        assert!(!s.project.items.values().any(|i| i.name.contains("Piccadilly") && i.as_comp().is_some()));
+    }
+
+    #[test]
+    fn manager_apply_places_selected_footage() {
+        let mut s = session();
+        s.execute("comp.new", json!({"name": "OpenComp", "width": 320, "height": 180, "duration": 2, "frameRate": 25.0})).unwrap();
+        let foot = add_footage(&mut s, "Honor_400_EN.mp4", 1920, 1080);
+        s.state.project_selection = vec![foot];
+        s.execute("screen.manager.select", json!({"names": ["Piccadilly"], "jobMode": "bySize"})).unwrap();
+        let r = s.execute("screen.manager.apply", json!({})).unwrap();
+        assert_eq!(r["source"], "Honor_400_EN.mp4");
+        let id = ItemId(r["created"][0]["comp"].as_u64().unwrap());
+        let w = r["created"][0]["width"].as_u64().unwrap() as u32;
+        let h = r["created"][0]["height"].as_u64().unwrap() as u32;
+        assert_fitted_source(&s, id, foot, 1920, 1080, w, h);
+    }
+
+    #[test]
+    fn manager_apply_uses_active_comp_when_nothing_is_selected() {
+        let mut s = session();
+        let src = plate(&mut s);
+        s.state.project_selection.clear();
+        assert!(s.active_comp_id().is_some());
+        s.execute("screen.manager.select", json!({"names": ["Piccadilly"], "jobMode": "bySize"})).unwrap();
+        let r = s.execute("screen.manager.apply", json!({})).unwrap();
+        let id = ItemId(r["created"][0]["comp"].as_u64().unwrap());
+        assert_eq!(layer_item(&s, id), Some(src));
+    }
+
+    #[test]
+    fn manager_apply_refuses_empty_comps_without_a_source() {
+        let mut s = session();
+        s.execute("screen.manager.select", json!({"names": ["Piccadilly"], "jobMode": "bySize"})).unwrap();
+        let before = s.project.items.len();
+        let err = s.execute("screen.manager.apply", json!({})).unwrap_err().to_string();
+        assert!(err.contains("Select a comp or footage"), "{err}");
+        assert_eq!(s.project.items.len(), before);
+    }
+
+    #[test]
+    fn manager_apply_is_one_undo_step() {
+        let mut s = session();
+        plate(&mut s);
+        s.execute("screen.manager.select", json!({"names": ["Piccadilly", "1.7HD"], "jobMode": "bySize"})).unwrap();
+        let n = s.history.undo.len();
+        s.execute("screen.manager.apply", json!({})).unwrap();
+        assert_eq!(s.history.undo.len(), n + 1);
+        assert_eq!(s.history.undo.last().unwrap().0, "Apply Screen Manager");
+    }
+
+    #[test]
+    fn al_salam_combiner_copies_contain_the_source() {
+        let mut s = session();
+        let src = plate(&mut s);
+        s.execute("screen.manager.select", json!({"names": ["Al Salam Sync"], "jobMode": "bySize"})).unwrap();
+        s.execute("screen.manager.apply", json!({"combiner": "Al_Salam_Sync"})).unwrap();
+        let face = s.project.items.values().find(|i| i.name.contains("Al Salam") && i.as_comp().is_some_and(|c| c.width == 1536)).expect("face");
+        assert_eq!(layer_item(&s, face.id), Some(src));
+        let combined = s.project.items.values().find(|i| i.as_comp().is_some_and(|c| c.width == 3072)).expect("combined");
+        let cc = combined.as_comp().unwrap();
+        assert_eq!(cc.layers.len(), 2);
+        for l in &cc.layers {
+            match l.source {
+                LayerSource::Comp { item } => assert_eq!(item, face.id),
+                _ => panic!("combiner layer should be the fitted screen comp"),
+            }
+        }
     }
 }
