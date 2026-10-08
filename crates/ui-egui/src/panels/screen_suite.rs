@@ -261,7 +261,8 @@ fn sorter_tab(app: &mut EffectcraftApp, ui: &mut egui::Ui, alerts: &[PanelAlert]
     heading(ui, "Size Sorter", if hits == 0 { "Paste-to-size sorter" } else { "Result" });
     ui.label(RichText::new("Paste screen names or pixel sizes, one per line, in any order.").small().color(Color32::from_gray(140)));
     let mut paste = app.session.state.screen.paste.clone();
-    let r = ui.add(egui::TextEdit::multiline(&mut paste).desired_width(f32::INFINITY).desired_rows(8).hint_text("1. Jahra Prime\n2. Al Salam Sync"));
+    let paste_rows = if hits == 0 { 8 } else { 3 };
+    let r = ui.add(egui::TextEdit::multiline(&mut paste).desired_width(f32::INFINITY).desired_rows(paste_rows).hint_text("1. Jahra Prime\n2. Al Salam Sync"));
     app.auto.add("screenSuite.paste", r.rect, "paste");
     if r.changed() {
         app.session.state.screen.paste = paste;

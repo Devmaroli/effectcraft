@@ -243,7 +243,7 @@ fn screen_suite_booking_build_and_extra_stack_warning() {
 fn mockup_dock() -> DockNode {
     DockNode::Split {
         vertical: false,
-        size: SplitSize::FixedB(460.0),
+        size: SplitSize::FixedB(520.0),
         a: Box::new(DockNode::Split {
             vertical: true,
             size: SplitSize::Ratio(0.58),
@@ -310,7 +310,7 @@ fn screen_suite_v2_snapshots() {
     h.state_mut().session.execute("comp.new", json!({"name": "Al Salam Sync B", "width": 1536, "height": 576, "frameRate": 25.0, "open": false})).unwrap();
     h.state_mut().session.execute("screen.manager.select", json!({"names": ["Al Salam Sync"], "jobMode": "bySize"})).unwrap();
     h.state_mut().session.execute("screen.manager.combine", json!({"combiner": "Al_Salam_Sync"})).unwrap();
-    h.state_mut().session.execute("screen.matcher.check", json!({"names": ["Al Salam Sync"]})).unwrap();
+    h.state_mut().session.execute("screen.matcher.check", json!({})).unwrap();
     h.state_mut().session.execute("screen.suite.tab", json!({"tab": "qc"})).unwrap();
     h.state_mut().ui.dock = mockup_dock();
     h.state_mut().ui.maximized = None;

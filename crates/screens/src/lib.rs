@@ -251,6 +251,14 @@ mod tests {
         let outdoor = sort_lines(&lib, paste, true, MatchMode::Flexible, &SorterFilters { kind: "Outdoor".into(), ..SorterFilters::default() }, false);
         let hidden = hidden_row_count(&outdoor);
         assert!(hidden >= 1, "Grand Avenues (indoor) hidden: {:?}", outdoor.rows);
+        assert!(outdoor.rows.iter().any(|row| !row.hidden && row.use_name.contains("Salam")), "Al Salam stays visible under Outdoor: {:?}", outdoor.rows);
+        assert!(
+            outdoor.rows.iter().any(|row| !row.hidden && (row.use_name.contains("Marina") || row.covers.iter().any(|c| c.contains("Marina")))),
+            "Marina stays visible under Outdoor: {:?}",
+            outdoor.rows
+        );
+        let visible = outdoor.rows.iter().filter(|r| !r.hidden).count();
+        assert!(visible >= 6, "Outdoor still shows the production sizes: visible={visible} {:?}", outdoor.rows);
         let sent = send_names(&outdoor, false);
         assert!(sent.iter().any(|n| n == "Grand Avenues" || n.contains("Grand Avenues")), "hidden still sent: {sent:?}");
         assert_eq!(sent.len(), outdoor.paste_names_by_size.len());

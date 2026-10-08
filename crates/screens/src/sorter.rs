@@ -121,6 +121,9 @@ pub struct SorterRow {
     /// Library name when the Entry column shows the pasted name instead.
     #[serde(default)]
     pub library_hint: String,
+    /// Inventory names for this row (filters look these up, not the pasted labels).
+    #[serde(default)]
+    pub library_names: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -265,6 +268,7 @@ fn group_rows(lib: &Library, hits: &[SorterHit]) -> Vec<SorterRow> {
                 prod_height,
                 covers_label,
                 library_hint,
+                library_names,
             }
         })
         .collect()
@@ -459,7 +463,16 @@ fn row_visible(lib: &Library, row: &SorterRow, filters: &SorterFilters) -> bool 
     if filters.is_empty() {
         return true;
     }
-    row.covers.iter().any(|n| lib.screen_by_name(n).is_some_and(|s| filters.allows(s)))
+    let names: Vec<&String> = row.library_names.iter().chain(row.covers.iter()).chain(std::iter::once(&row.library_hint)).collect();
+    names.iter().any(|n| {
+        if n.is_empty() {
+            return false;
+        }
+        if let Some(s) = lib.screen_by_name(n) {
+            return filters.allows(s);
+        }
+        lib.screens.iter().any(|s| s.aliases.iter().any(|a| normalize(a) == normalize(n)) && filters.allows(s))
+    })
 }
 
 /// Names actually sent (filters never drop these).
