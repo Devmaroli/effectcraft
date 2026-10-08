@@ -93,14 +93,13 @@ jobs:
           pre=false
           case "$VERSION" in *-*) pre=true ;; esac
           {
-            echo "Windows office install (x64): per-user Setup.exe (no administrator rights) and a portable zip."
-            echo
-            echo 'Installer path: `%LOCALAPPDATA%\Programs\Craft\effectcraft`'
-            echo 'Portable: extract anywhere; `portable.txt` keeps settings next to the exe.'
-            echo
-            echo '```'
+            printf '%s\n' "Windows office install (x64): per-user Setup.exe (no administrator rights) and a portable zip."
+            printf '\n'
+            printf 'Installer path: %%LOCALAPPDATA%%\\Programs\\Craft\\effectcraft\n'
+            printf 'Portable: extract anywhere; portable.txt keeps settings next to the exe.\n'
+            printf '\n```\n'
             cat SHA256SUMS.txt
-            echo '```'
+            printf '```\n'
           } >"$RUNNER_TEMP/office-notes.md"
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" --clobber -- effectcraft-Setup-x64.exe effectcraft-Portable-x64.zip SHA256SUMS.txt
