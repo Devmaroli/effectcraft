@@ -254,6 +254,7 @@ fn filters_from(p: &Value, cur: &SorterFilters) -> SorterFilters {
         governorate: str_p(p, "governorate").unwrap_or(&cur.governorate).to_string(),
         category: str_p(p, "category").unwrap_or(&cur.category).to_string(),
         search: str_p(p, "search").unwrap_or(&cur.search).to_string(),
+        animated: p.get("animated").and_then(Value::as_bool).unwrap_or(cur.animated),
     }
 }
 
@@ -394,6 +395,22 @@ fn manager_select(s: &mut Session, p: &Value) -> Result<Value> {
     serde_json::to_value(&s.state.screen.manager).map_err(|e| EngineError::Other(e.to_string()))
 }
 
+/// Library inventory size wins (same numbers the Screen Library table shows). Fall back to the
+/// Screen Manager match, then to an SM preset. Insert always uses the live composition size.
+fn resolve_apply_size(lib: &Library, s: &Session, name: &str) -> Option<(u32, u32, String)> {
+    if let Some(v) = lib.canonical_wh(name) {
+        return Some(v);
+    }
+    if let Some(m) = s.state.screen.manager.matches.iter().find(|m| normalize(&m.asked) == normalize(name) && m.status == "ok" && m.width > 0 && m.height > 0) {
+        return Some((m.width, m.height, String::new()));
+    }
+    if let Some(m) = s.state.screen.manager.matches.iter().find(|m| normalize(&m.preset) == normalize(name) && m.status == "ok" && m.width > 0 && m.height > 0)
+    {
+        return Some((m.width, m.height, String::new()));
+    }
+    None
+}
+
 fn ensure_preset_comp(s: &mut Session, name: &str, width: u32, height: u32, duration_s: f64) -> Result<ItemId> {
     if let Some(id) = s.project.items.values().find(|i| i.name == name && i.as_comp().is_some()).map(|i| i.id) {
         return Ok(id);
@@ -442,13 +459,7 @@ fn manager_apply(s: &mut Session, p: &Value) -> Result<Value> {
     let mut taken: Vec<String> = s.project.items.values().map(|i| i.name.clone()).collect();
     let suffixes = suffix_variants(&s.state.screen.suffix);
     for name in &selected {
-        let (w, h, group) = if let Some(pr) = lib.preset_by_name(name) {
-            (pr.width, pr.height, pr.group.clone())
-        } else if let Some(sc) = lib.screen_by_name(name).or_else(|| lib.screens.iter().find(|sc| normalize(&sc.name) == normalize(name))) {
-            (sc.width, sc.height, sc.group.clone())
-        } else if let Some(m) = s.state.screen.manager.matches.iter().find(|m| m.preset == *name) {
-            (m.width, m.height, String::new())
-        } else {
+        let Some((w, h, group)) = resolve_apply_size(&lib, s, name) else {
             continue;
         };
         let dur = if size_master {
@@ -475,9 +486,11 @@ fn manager_apply(s: &mut Session, p: &Value) -> Result<Value> {
             }
             let id = ensure_preset_comp(s, &comp_name, w, h, dur)?;
             taken.push(comp_name.clone());
-            place_source_in_comp(s, id, &source, w, h, dur)?;
-            created
-                .push(json!({"name": comp_name, "screen": name, "comp": id.0, "width": w, "height": h, "duration": dur, "fps": 25.0, "footageRenamed": false}));
+            let (cw, ch) = s.project.comp(id).map(|c| (c.width.max(1), c.height.max(1))).unwrap_or((w, h));
+            place_source_in_comp(s, id, &source, cw, ch, dur)?;
+            created.push(
+                json!({"name": comp_name, "screen": name, "comp": id.0, "width": cw, "height": ch, "duration": dur, "fps": 25.0, "footageRenamed": false}),
+            );
         }
     }
     let combined = combine_active(s, p)?;
@@ -576,7 +589,8 @@ fn collapse_undo(s: &mut Session, before: Arc<Project>, undo_at: usize, label: &
 }
 
 fn source_ids_for_column(s: &Session, col: &CombinerColumn, combined_w: u32, combined_h: u32) -> Vec<ItemId> {
-    let (fw, fh) = col.match_wh.unwrap_or((0, 0));
+    let lib = session_lib(s);
+    let (fw, fh) = lib.canonical_wh(&col.screen_name).map(|(w, h, _)| (w, h)).or(col.match_wh).unwrap_or((0, 0));
     let mut out = Vec::new();
     for (id, c) in s.project.comps() {
         if c.width == combined_w && c.height == combined_h {
@@ -610,7 +624,7 @@ fn combine_active(s: &mut Session, p: &Value) -> Result<Value> {
     let mut out = Vec::new();
     let mut warnings = Vec::new();
     for c in combiners {
-        let normal = CombinerLayout::from_combiner(c);
+        let normal = CombinerLayout::from_library(&lib, c);
         let mut sources = Vec::new();
         for col in &c.columns {
             sources.extend(source_ids_for_column(s, col, normal.width, normal.height));
@@ -960,10 +974,13 @@ fn library_edit(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(name) = str_p(p, "duplicate") {
         library_edit::duplicate_screen(&mut lib, name);
     }
-    if let Some(name) = str_p(p, "name")
-        && let (Some(w), Some(h)) = (p.get("width").and_then(Value::as_u64), p.get("height").and_then(Value::as_u64))
-    {
-        library_edit::set_screen_size(&mut lib, name, w as u32, h as u32);
+    if let Some(name) = str_p(p, "name") {
+        if let (Some(w), Some(h)) = (p.get("width").and_then(Value::as_u64), p.get("height").and_then(Value::as_u64)) {
+            library_edit::set_screen_size(&mut lib, name, w as u32, h as u32);
+        }
+        if let Some(an) = p.get("animated").and_then(Value::as_bool) {
+            library_edit::set_screen_animated(&mut lib, name, an);
+        }
     }
     if let Some(id) = str_p(p, "fix") {
         let fix = str_p(p, "value").unwrap_or("");
@@ -1094,7 +1111,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Sort Booking Names",
             ["Composition", "Screen Suite"],
             None,
-            "{paste?, cleanup?, sendAll?, matchMode?: flexible|strict, group?, kind?, governorate?, category?, search?, answers?: [{id, action, pick}]}",
+            "{paste?, cleanup?, sendAll?, matchMode?: flexible|strict, group?, kind?, governorate?, category?, search?, animated?: bool, answers?: [{id, action, pick}]}",
             always,
             sorter_sort
         ),
@@ -1176,7 +1193,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Edit a Screen Library row",
             [],
             None,
-            "{add?, delete?, duplicate?, name?, width?, height?, group?, fix?, value?, section?}",
+            "{add?, delete?, duplicate?, name?, width?, height?, group?, animated?, fix?, value?, section?}",
             always,
             library_edit
         ),
@@ -1526,5 +1543,52 @@ mod tests {
                 _ => panic!("combiner layer should be the fitted screen comp"),
             }
         }
+    }
+
+    #[test]
+    fn manager_apply_fits_to_live_comp_not_stale_preset() {
+        let mut s = session();
+        let src = plate(&mut s);
+        s.execute("comp.new", json!({"name": "Al Nassar Tower", "width": 1536, "height": 576, "frameRate": 25.0, "open": false})).unwrap();
+        s.state.project_selection = vec![src];
+        let mut lib = Library::load();
+        if let Some(p) = lib.presets.iter_mut().find(|p| normalize(&p.name) == "al nassar tower") {
+            p.width = 2688;
+            p.height = 1152;
+        }
+        s.state.screen.library = Some(lib);
+        s.execute("screen.manager.select", json!({"names": ["Al Nassar Tower"], "jobMode": "bySize"})).unwrap();
+        let r = s.execute("screen.manager.apply", json!({})).unwrap();
+        let id = ItemId(r["created"][0]["comp"].as_u64().unwrap());
+        let c = s.project.comp(id).expect("nassar comp");
+        assert_eq!((c.width, c.height), (1536, 576), "existing correct-sized comp must not be replaced by the stale SM preset");
+        assert_eq!(r["created"][0]["width"], 1536);
+        assert_eq!(r["created"][0]["height"], 576);
+        assert_fitted_source(&s, id, src, 1920, 1080, 1536, 576);
+    }
+
+    #[test]
+    fn manager_apply_new_comp_uses_library_size_not_stale_preset() {
+        let mut s = session();
+        plate(&mut s);
+        let mut lib = Library::load();
+        if let Some(p) = lib.presets.iter_mut().find(|p| normalize(&p.name) == "al nassar tower") {
+            p.width = 2688;
+            p.height = 1152;
+        }
+        let inv = lib.screens.iter().find(|sc| normalize(&sc.name) == "al nassar tower").expect("inventory nassar");
+        assert_eq!((inv.width, inv.height), (1536, 576));
+        s.state.screen.library = Some(lib);
+        s.execute("screen.manager.select", json!({"names": ["Al Nassar Tower"], "jobMode": "bySize"})).unwrap();
+        let r = s.execute("screen.manager.apply", json!({})).unwrap();
+        assert_eq!(r["created"][0]["width"].as_u64(), Some(1536), "{r}");
+        assert_eq!(r["created"][0]["height"].as_u64(), Some(576), "{r}");
+        let id = ItemId(r["created"][0]["comp"].as_u64().unwrap());
+        let src = s.state.project_selection[0];
+        assert_fitted_source(&s, id, src, 1920, 1080, 1536, 576);
+        let dir = "/opt/cursor/artifacts/screenshots";
+        let _ = std::fs::create_dir_all(dir);
+        save_frame(&s, id, &format!("{dir}/screen-library-insert-nassar.png"));
+        save_frame(&s, id, "/cursor/stores/self/screen-library-insert-nassar.png");
     }
 }

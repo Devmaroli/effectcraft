@@ -12,30 +12,6 @@
     "physical": ""
   },
   {
-    "id": 2,
-    "name": "Yaal Mall - Digital Screens",
-    "group": "Group 1",
-    "width": 1080,
-    "height": 1920,
-    "kind": "Indoor",
-    "location": "Yaal Mall",
-    "governorate": "Ahmadi",
-    "category": "Uncategorized",
-    "physical": ""
-  },
-  {
-    "id": 3,
-    "name": "Slayel Al Jahra - Digital Screens",
-    "group": "Group 1",
-    "width": 1080,
-    "height": 1920,
-    "kind": "Indoor",
-    "location": "Slayel Al-Jahra",
-    "governorate": "Jahra",
-    "category": "Uncategorized",
-    "physical": ""
-  },
-  {
     "id": 4,
     "name": "The Gate Mall - Digital Screens",
     "group": "Group 1",
@@ -57,7 +33,8 @@
     "location": "Gate Mall - Wall",
     "governorate": "Ahmadi",
     "category": "Uncategorized",
-    "physical": ""
+    "physical": "",
+    "animated": true
   },
   {
     "id": 6,
@@ -105,7 +82,8 @@
     "location": "Salmiya Express",
     "governorate": "Hawally",
     "category": "Elite",
-    "physical": "W 12.5m x H 7m"
+    "physical": "W 12.5m x H 7m",
+    "animated": true
   },
   {
     "id": 10,
@@ -213,7 +191,8 @@
     "location": "Al Ardiya",
     "governorate": "Farwaniya",
     "category": "Signature",
-    "physical": "W 10m x H 5m"
+    "physical": "W 10m x H 5m",
+    "animated": true
   },
   {
     "id": 19,
@@ -261,7 +240,8 @@
     "location": "Omariya",
     "governorate": "Farwaniya",
     "category": "Residential",
-    "physical": "W 8m x H 4m"
+    "physical": "W 8m x H 4m",
+    "animated": true
   },
   {
     "id": 23,
@@ -420,18 +400,6 @@
     "physical": "W 10m x H 5m"
   },
   {
-    "id": 36,
-    "name": "Firdous",
-    "group": "Group 2",
-    "width": 1920,
-    "height": 1080,
-    "kind": "Outdoor",
-    "location": "Firdous",
-    "governorate": "Farwaniya",
-    "category": "Residential",
-    "physical": "W 8m x H 4m"
-  },
-  {
     "id": 37,
     "name": "Al Rehab",
     "group": "Group 2",
@@ -525,7 +493,8 @@
     "location": "Adan",
     "governorate": "Mubarak Al Kabeer",
     "category": "Residential",
-    "physical": "W 10m x H 5m"
+    "physical": "W 10m x H 5m",
+    "animated": true
   },
   {
     "id": 45,
@@ -537,7 +506,8 @@
     "location": "Qusour",
     "governorate": "Mubarak Al Kabeer",
     "category": "Residential",
-    "physical": "W 10m x H 5m"
+    "physical": "W 10m x H 5m",
+    "animated": true
   },
   {
     "id": 46,
@@ -705,7 +675,8 @@
     "location": "Soor",
     "governorate": "Capital",
     "category": "Premium",
-    "physical": "W 17m x H 6m"
+    "physical": "W 17m x H 6m",
+    "animated": true
   },
   {
     "id": 60,
@@ -828,18 +799,6 @@
     "physical": "W 21m x H 8m"
   },
   {
-    "id": 70,
-    "name": "C.D.C",
-    "group": "Group 3",
-    "width": 1536,
-    "height": 576,
-    "kind": "Outdoor",
-    "location": "C.D.C Complex Screen",
-    "governorate": "Capital",
-    "category": "Premium",
-    "physical": "W 15m x H 5m"
-  },
-  {
     "id": 71,
     "name": "Al Nassar Tower",
     "group": "Group 3",
@@ -873,7 +832,8 @@
     "location": "Suad",
     "governorate": "Capital",
     "category": "Premium",
-    "physical": "W 15m x H 5m"
+    "physical": "W 15m x H 5m",
+    "animated": true
   },
   {
     "id": 74,
@@ -1029,19 +989,8 @@
     "location": "Salhiya Screen",
     "governorate": "Capital",
     "category": "Stand Alone",
-    "physical": "W 5.5m x H 16m"
-  },
-  {
-    "id": 87,
-    "name": "Aqarat Square (2 screens)",
-    "group": "Group 5",
-    "width": 672,
-    "height": 1836,
-    "kind": "Outdoor",
-    "location": "Aqarat Screen",
-    "governorate": "Capital",
-    "category": "Elite",
-    "physical": "W 5m x H 20m (each)"
+    "physical": "W 5.5m x H 16m",
+    "animated": true
   },
   {
     "id": 88,
@@ -1101,13 +1050,14 @@
     "location": "The Gate Mall Outdoor",
     "governorate": "Ahmadi",
     "category": "Elite",
-    "physical": "W 11m x H 8m (each)"
+    "physical": "W 11m x H 8m (each)",
+    "animated": true
   },
   {
     "id": 93,
     "name": "Kuwait Gate",
     "group": "Group 8",
-    "width": 4460,
+    "width": 4459,
     "height": 378,
     "kind": "Outdoor",
     "location": "Kuwait Gate",
@@ -1173,7 +1123,8 @@
     "location": "Piccadilly",
     "governorate": "Hawally",
     "category": "Elite",
-    "physical": "W 48m x H 6m"
+    "physical": "W 48m x H 6m",
+    "animated": true
   },
   {
     "id": 99,
@@ -1197,7 +1148,8 @@
     "location": "Divonne Complex",
     "governorate": "Mubarak Al Kabeer",
     "category": "Anchors",
-    "physical": "W 35.52m x H 5.76m"
+    "physical": "W 35.52m x H 5.76m",
+    "animated": true
   },
   {
     "id": 101,
@@ -1341,7 +1293,8 @@
     "location": "Mubarakiya Time Square",
     "governorate": "Capital",
     "category": "Elite",
-    "physical": "W 15m x H 10m"
+    "physical": "W 15m x H 10m",
+    "animated": true
   },
   {
     "id": 113,
@@ -1581,7 +1534,8 @@
     "location": "Thuraya",
     "governorate": "Capital",
     "category": "Elite",
-    "physical": ""
+    "physical": "",
+    "animated": true
   },
   {
     "id": 133,

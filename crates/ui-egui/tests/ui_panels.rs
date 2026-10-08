@@ -436,3 +436,48 @@ fn window_menu_fits_1080p_and_screen_suite_is_near_the_top() {
     assert!(lib_i * 5 < n, "Screen Library index {lib_i} of {n} is not < 20%: {rows:?}");
     assert!(h.state().auto.find("menu.window.renderQueue").is_some(), "Render Queue must still be in the Window menu");
 }
+
+#[test]
+fn screen_suite_animated_filter_and_library_insert_size() {
+    let mut s = Session::default();
+    s.execute("comp.new", json!({"name": "Honor_400_EN.mp4", "width": 1920, "height": 1080, "duration": 8, "frameRate": 25.0})).unwrap();
+    s.execute("layer.newSolid", json!({"name": "Artwork", "color": "#e23d28", "width": 1920, "height": 1080})).unwrap();
+    s.state.project_selection = vec![s.active_comp_id().expect("source")];
+    s.execute("screen.sorter.sort", json!({"paste": "Piccadilly\nJahra Prime\nKuwait Gate", "cleanup": true, "animated": true})).unwrap();
+    s.state.screen.filters_open = true;
+    s.state.screen.filters.animated = true;
+    let mut h = Harness::builder().with_size(egui::vec2(1680.0, 1020.0)).build_eframe(|_| EffectcraftApp::new(s));
+    h.run_steps(4);
+    open(&mut h, "screenSuite");
+    h.state_mut().ui.maximized = Some(PanelKind::ScreenSuite);
+    h.state_mut().session.execute("screen.suite.tab", json!({"tab": "booking"})).unwrap();
+    h.run_steps(6);
+    assert!(h.state().auto.find("screenSuite.filter.animated").is_some(), "Animated filter next to the existing filters");
+    let dir = "/opt/cursor/artifacts/screenshots";
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::create_dir_all("/cursor/stores/self").unwrap();
+    h.render().expect("render").save(format!("{dir}/screen-library-animated-filter.png")).unwrap();
+    h.render().expect("render").save("/cursor/stores/self/screen-library-animated-filter.png").unwrap();
+
+    h.state_mut().session.execute("screen.sorter.send", json!({"screenSpecific": false})).unwrap();
+    h.state_mut().session.execute("screen.manager.apply", json!({})).unwrap();
+    h.state_mut().session.execute("screen.suite.tab", json!({"tab": "build"})).unwrap();
+    h.run_steps(6);
+    let nassar_or_kuwait: Vec<_> =
+        h.state().session.project.items.values().filter(|i| i.name.contains("Kuwait Gate") && i.as_comp().is_some()).cloned().collect();
+    assert!(!nassar_or_kuwait.is_empty(), "Kuwait Gate comp created");
+    for item in &nassar_or_kuwait {
+        let c = item.as_comp().unwrap();
+        assert_eq!((c.width, c.height), (4459, 378), "{} must use the library size", item.name);
+        assert!(!c.layers.is_empty(), "{} insert must match the comp", item.name);
+    }
+    h.render().expect("render").save(format!("{dir}/screen-library-insert-kuwait-gate.png")).unwrap();
+    h.render().expect("render").save("/cursor/stores/self/screen-library-insert-kuwait-gate.png").unwrap();
+
+    h.state_mut().session.execute("screen.library.open", json!({})).unwrap();
+    let ctx = h.ctx.clone();
+    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "window.panel", json!({"panel": "screenLibrary", "float": true})).unwrap();
+    h.run_steps(6);
+    assert!(h.state().auto.find("screenLibrary.filter.animated").is_some());
+    h.render().expect("render").save(format!("{dir}/screen-library-animated-column.png")).unwrap();
+}

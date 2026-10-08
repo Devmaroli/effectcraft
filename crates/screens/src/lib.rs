@@ -270,4 +270,51 @@ mod tests {
         assert!(token_score("jahra prime", "Jahra Prime LED") >= 0.9);
         assert!(names_match_90("Marina - Palm Trees", "Marina - Palm Trees"));
     }
+
+    #[test]
+    fn sheet_sync_kuwait_gate_animated_and_kept_groups() {
+        let lib = lib();
+        let kg = lib.screen_by_name("Kuwait Gate").expect("kuwait gate");
+        assert_eq!((kg.width, kg.height), (4459, 378));
+        let sm = lib.preset_by_name("Kuwait Gate").expect("sm kuwait");
+        assert_eq!((sm.width, sm.height), (4459, 378));
+        assert!(lib.screen_by_name("Piccadilly").is_some_and(|s| s.animated));
+        assert!(lib.screen_by_name("The Gate Mall - Wall Screen").is_some_and(|s| s.animated));
+        assert!(lib.screen_by_name("The Avenues Mall - Digital Screens").is_some(), "Avenues Digital kept");
+        assert!(lib.screen_by_name("Yaal Mall - Digital Screens").is_none());
+        assert!(lib.screen_by_name("Firdous").is_none());
+        assert!(lib.screen_by_name("C.D.C").is_none());
+        assert!(lib.screen_by_name("Aqarat Square (2 screens)").is_none());
+        assert!(lib.presets.iter().any(|p| normalize(&p.name).contains("360") && normalize(&p.group).contains("360 mall")));
+        assert!(lib.presets.iter().any(|p| normalize(&p.group).contains("al kout")));
+        assert!(lib.presets.iter().any(|p| normalize(&p.group) == "dayarti"));
+        assert!(lib.preset_by_name("Sultan Column").is_none());
+        assert!(lib.sizemaster.iter().all(|p| normalize(&p.group) != "cinemas"));
+        assert!(lib.screen_by_name("Assima Mono").is_none(), "sheet-only screens were not added");
+        assert!(lib.screen_by_name("Al Nugra - Daaity").is_none());
+        assert!(lib.presets.iter().any(|p| normalize(&p.group) == "print"));
+        assert!(lib.presets.iter().any(|p| normalize(&p.group).contains("khairan")));
+        assert!(lib.presets.iter().any(|p| normalize(&p.group).contains("warehouse")));
+        let rows = merged_screens(&lib);
+        let nassar = rows.iter().find(|r| normalize(&r.name) == "al nassar tower").expect("nassar");
+        assert_eq!((nassar.width, nassar.height), (1536, 576));
+        assert_eq!(lib.canonical_wh("Al Nassar Tower"), Some((1536, 576, nassar.group.clone())));
+        let sz = lib.sizemaster.iter().find(|p| normalize(&p.name) == "al salam sync").expect("sz al salam");
+        assert_eq!((sz.width, sz.height), (3072, 576), "SizeMaster keeps the combined Al Salam size");
+        let thuraya_side = lib.screen_by_name("Thuraya Screen 2 (Side)").expect("thuraya side combiner member");
+        assert_eq!((thuraya_side.width, thuraya_side.height), (960, 540));
+    }
+
+    #[test]
+    fn animated_filter_hides_rows_but_still_sends() {
+        let lib = lib();
+        let paste = "Piccadilly\nJahra Prime\nAl Salam Sync";
+        let shown = sort_lines(&lib, paste, true, MatchMode::Flexible, &SorterFilters { animated: true, ..SorterFilters::default() }, false);
+        assert!(shown.hits.iter().any(|h| normalize(&h.screen).contains("piccadilly")), "matches must not be dropped: {shown:?}");
+        assert!(shown.rows.iter().any(|r| r.hidden && !r.use_name.contains("Piccadilly")), "non-animated rows hide: {:?}", shown.rows);
+        assert!(shown.rows.iter().any(|r| !r.hidden && r.use_name.contains("Piccadilly")));
+        let sent = send_names(&shown, false);
+        assert!(sent.iter().any(|n| n.contains("Jahra") || n == "1.7HD"), "hidden still sent: {sent:?}");
+        assert_eq!(sent.len(), shown.paste_names_by_size.len());
+    }
 }

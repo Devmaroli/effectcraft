@@ -16,6 +16,8 @@ pub struct MergedScreenRow {
     pub in_manager: bool,
     pub in_sizemaster: bool,
     pub in_adapter: bool,
+    #[serde(default)]
+    pub animated: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -45,7 +47,7 @@ pub struct ImportPreview {
 
 pub fn merged_screens(lib: &Library) -> Vec<MergedScreenRow> {
     let mut rows: Vec<MergedScreenRow> = Vec::new();
-    let push = |rows: &mut Vec<MergedScreenRow>, name: &str, width: u32, height: u32, group: &str| {
+    let push = |rows: &mut Vec<MergedScreenRow>, name: &str, width: u32, height: u32, group: &str, animated: bool| {
         if rows.iter().any(|r| normalize(&r.name) == normalize(name)) {
             return;
         }
@@ -58,17 +60,20 @@ pub fn merged_screens(lib: &Library) -> Vec<MergedScreenRow> {
             in_manager: lib.presets.iter().any(|p| normalize(&p.name) == n),
             in_sizemaster: lib.sizemaster.iter().any(|p| normalize(&p.name) == n),
             in_adapter: lib.adapter.iter().any(|p| normalize(&p.name) == n),
+            animated,
         });
     };
     // Inventory sizes win (Al Nassar Tower is 1536×576, not the old 2688×1152 SM preset).
     for s in &lib.screens {
-        push(&mut rows, &s.name, s.width, s.height, &s.group);
+        push(&mut rows, &s.name, s.width, s.height, &s.group, s.animated);
     }
     for p in &lib.presets {
-        push(&mut rows, &p.name, p.width, p.height, &p.group);
+        let animated = lib.screen_lookup(&p.name).is_some_and(|s| s.animated);
+        push(&mut rows, &p.name, p.width, p.height, &p.group, animated);
     }
     for p in lib.sizemaster.iter().chain(lib.adapter.iter()) {
-        push(&mut rows, &p.name, p.width, p.height, &p.group);
+        let animated = lib.screen_lookup(&p.name).is_some_and(|s| s.animated);
+        push(&mut rows, &p.name, p.width, p.height, &p.group, animated);
     }
     rows.sort_by_key(|a| a.name.to_ascii_lowercase());
     rows
@@ -79,7 +84,7 @@ pub fn library_issues(lib: &Library) -> Vec<LibraryIssue> {
     let rows = merged_screens(lib);
     for (i, r) in rows.iter().enumerate() {
         if r.width % 2 == 1 || r.height % 2 == 1 {
-            let intended = normalize(&r.name).contains("piccadilly") && r.width == 2027;
+            let intended = (normalize(&r.name).contains("piccadilly") && r.width == 2027) || (normalize(&r.name).contains("kuwait gate") && r.width == 4459);
             if !intended {
                 out.push(LibraryIssue {
                     id: format!("odd-{i}"),
@@ -246,6 +251,7 @@ pub fn add_screen(lib: &mut Library, name: &str, width: u32, height: u32, group:
             custom: true,
             aliases: Vec::new(),
             not_in_planner: true,
+            animated: false,
         });
     }
 }
@@ -261,6 +267,21 @@ pub fn set_screen_size(lib: &mut Library, name: &str, width: u32, height: u32) {
         if normalize(&s.name) == normalize(name) {
             s.width = width;
             s.height = height;
+        }
+    }
+    for c in &mut lib.combiners {
+        for col in &mut c.columns {
+            if normalize(&col.screen_name) == normalize(name) {
+                col.match_wh = Some((width, height));
+            }
+        }
+    }
+}
+
+pub fn set_screen_animated(lib: &mut Library, name: &str, animated: bool) {
+    for s in &mut lib.screens {
+        if normalize(&s.name) == normalize(name) {
+            s.animated = animated;
         }
     }
 }
