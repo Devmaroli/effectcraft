@@ -1,6 +1,6 @@
 //! End-to-end tests of the agent CLI: JSON output, project round-trips, rendering and MCP over stdio.
 
-use std::io::Write;
+use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
@@ -246,4 +246,155 @@ fn script_file_and_eval() {
     assert_eq!(out.status.code(), Some(1));
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains(".jsxbin scripts are not supported: run the .jsx source") && !err.contains("SyntaxError"), "{err}");
+}
+
+fn events(stderr: &[u8]) -> Vec<Value> {
+    String::from_utf8_lossy(stderr).lines().filter_map(|l| serde_json::from_str(l.trim()).ok()).collect()
+}
+
+/// Raw yuv420p to a file: sidecar header, `frame` 1/N on stderr, `--gpu` falls back without an adapter.
+#[test]
+fn stream_yuv420p_sidecar_and_progress() {
+    let proj = tmp("stream.ecproj");
+    let p = proj.to_str().unwrap();
+    ok_json(&[
+        "run",
+        "comp.new",
+        r#"{"name":"S","width":32,"height":16,"duration":0.2,"frameRate":10}"#,
+        "layer.newSolid",
+        r##"{"color":"#ff0000","name":"Red"}"##,
+        "--empty",
+        "--save-as",
+        p,
+    ]);
+    let yuv = tmp("s.yuv");
+    let side = tmp("s.json");
+    let wav = tmp("s.wav");
+    let out = bin()
+        .args([
+            "render",
+            p,
+            "--comp",
+            "S",
+            "--format",
+            "yuv420p",
+            "--out",
+            yuv.to_str().unwrap(),
+            "--sidecar",
+            side.to_str().unwrap(),
+            "--audio-out",
+            wav.to_str().unwrap(),
+            "--gpu",
+            "--no-window",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let ev = events(&out.stderr);
+    assert!(ev.iter().any(|e| e["event"] == "header"), "{ev:?}");
+    assert!(ev.iter().any(|e| e["event"] == "frame" && e["n"] == 1), "frame 1 missing: {ev:?}");
+    assert!(ev.iter().any(|e| e["event"] == "done"), "{ev:?}");
+    let hdr: Value = serde_json::from_str(std::fs::read_to_string(&side).unwrap().trim()).unwrap();
+    assert_eq!(hdr["width"], 32);
+    assert_eq!(hdr["height"], 16);
+    assert_eq!(hdr["pixFmt"], "yuv420p");
+    let bytes = std::fs::read(&yuv).unwrap();
+    assert_eq!(bytes.len() as u64, hdr["bytesPerFrame"].as_u64().unwrap() * hdr["frames"].as_u64().unwrap());
+    let wav_bytes = std::fs::read(&wav).unwrap();
+    assert_eq!(&wav_bytes[..4], b"RIFF");
+}
+
+#[test]
+fn stream_stdout_is_raw_not_json() {
+    let proj = tmp("pipe.ecproj");
+    let p = proj.to_str().unwrap();
+    ok_json(&["run", "comp.new", r#"{"name":"P","width":8,"height":8,"duration":0.1,"frameRate":10}"#, "--empty", "--save-as", p]);
+    let out = bin().args(["render", p, "--format", "rgb24", "--out", "-", "--start", "0", "--end", "0.1"]).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(out.stdout.len(), 8 * 8 * 3); // one 0.1s frame at 10 fps → 1 frame
+    let ev = events(&out.stderr);
+    assert!(ev.iter().any(|e| e["event"] == "header" && e["pixFmt"] == "rgb24"), "{ev:?}");
+}
+
+/// `--format prores --out FILE` still writes a movie (EncodeCraft fallback).
+#[test]
+fn prores_file_path_still_writes_mov() {
+    let proj = tmp("prores.ecproj");
+    let p = proj.to_str().unwrap();
+    ok_json(&[
+        "run",
+        "comp.new",
+        r#"{"name":"M","width":16,"height":16,"duration":0.1,"frameRate":10}"#,
+        "layer.newSolid",
+        r##"{"color":"#00ff00"}"##,
+        "--empty",
+        "--save-as",
+        p,
+    ]);
+    let mov = tmp("m.mov");
+    let out = bin().args(["render", p, "--comp", "M", "--format", "prores", "--prores", "hq", "--out", mov.to_str().unwrap()]).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let bytes = std::fs::read(&mov).unwrap();
+    assert!(bytes.len() > 8, "mov too small: {}", bytes.len());
+    let ev = events(&out.stderr);
+    assert!(ev.iter().any(|e| e["event"] == "header"), "encoded path emits header: {ev:?}");
+}
+
+#[test]
+fn serve_hello_render_quit() {
+    let proj = tmp("serve.ecproj");
+    let p = proj.to_str().unwrap();
+    ok_json(&["run", "comp.new", r#"{"name":"W","width":16,"height":16,"duration":0.1,"frameRate":10}"#, "--empty", "--save-as", p]);
+    let yuv = tmp("serve.yuv");
+    let mut child = bin()
+        .args(["serve", "--control", "0", "--idle-exit", "30", "--project", p, "--gpu"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stderr = std::io::BufReader::new(child.stderr.take().unwrap());
+    let mut line = String::new();
+    let port = loop {
+        line.clear();
+        if stderr.read_line(&mut line).unwrap() == 0 {
+            let _ = child.kill();
+            panic!("serve exited before listening");
+        }
+        if let Ok(v) = serde_json::from_str::<Value>(line.trim())
+            && v["event"] == "listening"
+        {
+            break v["port"].as_u64().expect("port") as u16;
+        }
+    };
+    let mut sock = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    sock.set_read_timeout(Some(std::time::Duration::from_secs(30))).unwrap();
+    let send = |sock: &mut std::net::TcpStream, v: Value| {
+        writeln!(sock, "{v}").unwrap();
+        sock.flush().unwrap();
+    };
+    send(&mut sock, json!({"id":1,"method":"hello","params":{}}));
+    let mut r = std::io::BufReader::new(sock.try_clone().unwrap());
+    let mut reply = String::new();
+    r.read_line(&mut reply).unwrap();
+    let hello: Value = serde_json::from_str(reply.trim()).unwrap();
+    assert_eq!(hello["ok"], true, "{hello}");
+    send(&mut sock, json!({"id":2,"method":"render.start","params":{"comp":"W","out": yuv.to_str().unwrap(), "pixFmt":"yuv420p"}}));
+    let mut got_ok = false;
+    for _ in 0..64 {
+        reply.clear();
+        if r.read_line(&mut reply).unwrap() == 0 {
+            break;
+        }
+        let v: Value = serde_json::from_str(reply.trim()).unwrap();
+        if v["id"] == 2 {
+            assert_eq!(v["ok"], true, "{v}");
+            got_ok = true;
+            break;
+        }
+    }
+    assert!(got_ok, "serve render.start did not reply");
+    assert!(yuv.metadata().unwrap().len() > 0, "yuv written");
+    send(&mut sock, json!({"id":3,"method":"app.quit","params":{}}));
+    let _ = child.wait();
 }

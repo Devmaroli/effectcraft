@@ -721,3 +721,14 @@ fn dooh_like_stack_matches_cpu() {
         check(&format!("dooh-like {depth:?} half"), compare_at(&s, RenderOpts { scale: 0.5, ..opts() }, Tick::ZERO), 0.0);
     }
 }
+
+/// An 8 GB-class card (RTX 3070 Ti) composites 6880×1032; a texture-dimension or VRAM miss falls back.
+#[test]
+fn composite_budget_covers_dooh_and_rejects_oversized() {
+    let budget = 6 * (1u64 << 30);
+    assert!(crate::composite_budget_ok(6880, 1032, 8192, budget));
+    assert!(crate::composite_budget_ok(6880, 1032, 16384, budget));
+    assert!(!crate::composite_budget_ok(6880, 1032, 4096, budget));
+    assert!(!crate::composite_budget_ok(0, 1080, 8192, budget));
+    assert!(!crate::composite_budget_ok(1920, 1080, 8192, 1));
+}

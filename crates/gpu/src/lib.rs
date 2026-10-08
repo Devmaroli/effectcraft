@@ -175,6 +175,16 @@ impl Gpu {
         &self.ctx.device
     }
 
+    /// Whether a full-frame composite of `width`×`height` is likely to fit on this device.
+    ///
+    /// EncodeCraft's office card is an 8 GB RTX 3070 Ti; a 6880×1032 DOOH frame is well inside
+    /// that. Oversized comps (or a tiny `max_texture_dimension_2d`) fall back to the CPU rather
+    /// than risking an OOM reset. The budget is 6 GiB of working set so 2 GiB stays for the OS
+    /// and other apps.
+    pub fn can_composite(&self, width: u32, height: u32) -> bool {
+        composite_budget_ok(width, height, self.device().limits().max_texture_dimension_2d, 6 * (1u64 << 30))
+    }
+
     /// Render a top-level comp frame and leave it on the GPU as a display texture (no
     /// readback unless a CPU fallback step needs one). `None` = render on the CPU.
     pub fn render_display(&self, r: &Renderer, comp: ItemId, t: Tick) -> Option<DisplayFrame> {
@@ -359,6 +369,17 @@ impl effectcraft_effects::psim::ParticleSim for Gpu {
         self.ctx.check_health().ok()?;
         particles::simulate(&self.ctx, req)
     }
+}
+
+/// Working-set check for [`Gpu::can_composite`]: `width`/`height` must fit in `max_dim`, and
+/// sixteen full-frame RGBA f32 textures (layers, mattes, readback) must fit in `budget_bytes`.
+pub fn composite_budget_ok(width: u32, height: u32, max_dim: u32, budget_bytes: u64) -> bool {
+    if width == 0 || height == 0 || width > max_dim || height > max_dim {
+        return false;
+    }
+    let frame = (width as u64).saturating_mul(height as u64).saturating_mul(16);
+    let working = frame.saturating_mul(16);
+    working > 0 && working <= budget_bytes
 }
 
 #[cfg(test)]
