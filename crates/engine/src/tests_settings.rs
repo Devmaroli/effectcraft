@@ -254,6 +254,7 @@ fn defaults_have_no_conflicts_and_match_the_menus() {
     assert!(t.all_conflicts().is_empty(), "{:?}", t.all_conflicts());
     assert_eq!(t.shortcut_of("file.save", &json!(null)), Some("Cmd+S"));
     assert_eq!(t.shortcut_of("app.settings", &json!({"page": "general"})), Some("Cmd+Alt+;"));
+    assert_eq!(t.shortcut_of("view.adaptivePlayback", &json!(null)), Some("Cmd+Alt+J"));
     assert!(t.bindables.len() > 500);
 }
 

@@ -64,6 +64,11 @@ impl AutoPick {
     pub const REPROBE: u32 = 48;
     /// The CPU wins only when clearly faster (ties and noise stay on the GPU).
     pub const MARGIN: f64 = 0.85;
+
+    /// GPU display/composite wins when it is at least as fast as the CPU within [`Self::MARGIN`].
+    pub fn gpu_wins(cpu_ms: f64, gpu_ms: f64) -> bool {
+        gpu_ms > 0.0 && cpu_ms >= gpu_ms * Self::MARGIN
+    }
     /// Keys remembered before the history is reset.
     const MAX_KEYS: usize = 1024;
 
@@ -83,7 +88,7 @@ impl AutoPick {
             return false;
         }
         let gpu_faster = match (s.gpu_ms, s.cpu_ms) {
-            (Some(g), Some(c)) => c >= g * Self::MARGIN,
+            (Some(g), Some(c)) => Self::gpu_wins(c, g),
             (g, _) => g.is_some(),
         };
         // Periodically re-measure the slower side.

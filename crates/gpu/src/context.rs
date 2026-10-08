@@ -8,7 +8,7 @@ use effectcraft_raster::Image;
 use wgpu::util::DeviceExt;
 
 /// Compute entry points in `kernels.wgsl` (one pipeline each).
-const ENTRIES: &[&str] = &[
+pub(crate) const ENTRIES: &[&str] = &[
     "warp_blend",
     "blend_full",
     "matte",
@@ -31,11 +31,12 @@ const ENTRIES: &[&str] = &[
     "bokeh_prefix",
     "bokeh_gather",
     "fill",
+    "unpack",
 ];
 
 /// Entry points that also bind group 1 (four read-only storage buffers; see
 /// [`Enc::dispatch_ext`]).
-const EXT_ENTRIES: &[&str] = &["classic3d"];
+pub(crate) const EXT_ENTRIES: &[&str] = &["classic3d"];
 
 /// Pixel format of every working texture: premultiplied RGBA, 32-bit float (32 bpc headroom;
 /// 8/16 bpc are emulated by clamping and quantising, as on the CPU).
@@ -243,7 +244,7 @@ pub struct GpuContext {
     pub(crate) max_dim: u32,
     bgl: wgpu::BindGroupLayout,
     bgl_ext: wgpu::BindGroupLayout,
-    pipelines: HashMap<&'static str, wgpu::ComputePipeline>,
+    kernels: crate::pipelines::Kernels,
     display_bgl: wgpu::BindGroupLayout,
     display: wgpu::ComputePipeline,
     dummy: wgpu::Texture,
@@ -268,6 +269,15 @@ pub struct GpuContext {
     /// Deferred readbacks (a browser worker's WebGPU device), see [`crate::deferred`].
     pub(crate) deferred: Option<Arc<crate::deferred::Deferred>>,
     readbacks: Arc<crate::readback::Readbacks>,
+    pub(crate) adapter_name: String,
+    pub(crate) backend: String,
+    pub(crate) vendor_id: u32,
+    pub(crate) f16_storage: bool,
+    /// GPU storage buffers for tightly packed uploads (rows that are not 256-byte aligned).
+    upload_pack: Mutex<Vec<wgpu::Buffer>>,
+    pack_tick: std::sync::atomic::AtomicUsize,
+    /// CPU padding for [`Self::upload_image`] when the unpack kernel cannot run.
+    pad_cpu: Mutex<Vec<u8>>,
 }
 
 fn tex_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
@@ -357,40 +367,11 @@ impl GpuContext {
         }
         let readbacks = crate::readback::Readbacks::new()?;
         let name = format!("{} ({:?})", info.name, info.backend);
+        let f16_storage = adapter.get_texture_format_features(wgpu::TextureFormat::Rgba16Float).allowed_usages.contains(wgpu::TextureUsages::STORAGE_BINDING);
         let adv3d_unsupported = crate::adv3d::raster_unsupported(adapter);
         if let Some(why) = &adv3d_unsupported {
             log::info!("gpu {name}: Advanced 3D renders on the CPU ({why})");
         }
-        let src = [
-            include_str!("shaders/common.wgsl"),
-            include_str!("shaders/kernels.wgsl"),
-            include_str!("shaders/classic3d.wgsl"),
-            include_str!("shaders/fx_color.wgsl"),
-            include_str!("shaders/fx_distort.wgsl"),
-            include_str!("shaders/fx_generate.wgsl"),
-            include_str!("shaders/fx_key.wgsl"),
-            include_str!("shaders/fx_stylize.wgsl"),
-            include_str!("shaders/fx_noise.wgsl"),
-            include_str!("shaders/fx_tone.wgsl"),
-            include_str!("shaders/fx_warp.wgsl"),
-            include_str!("shaders/fx_extra.wgsl"),
-            include_str!("shaders/fx_depth.wgsl"),
-            include_str!("shaders/fx_lut.wgsl"),
-            include_str!("shaders/fx_sim.wgsl"),
-            include_str!("shaders/fx_particles.wgsl"),
-            include_str!("shaders/fx_vr.wgsl"),
-            include_str!("shaders/fx_light.wgsl"),
-            include_str!("shaders/fx_transition.wgsl"),
-            include_str!("shaders/fx_text.wgsl"),
-            include_str!("shaders/fx_time.wgsl"),
-            include_str!("shaders/fx_pixel2.wgsl"),
-            include_str!("shaders/fx_gen2.wgsl"),
-            include_str!("shaders/sky.wgsl"),
-        ]
-        .concat();
-        let module = init_resource(&device, "kernels shader module", || {
-            device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("effectcraft kernels"), source: wgpu::ShaderSource::Wgsl(src.into()) })
-        })?;
         let bgl = init_resource(&device, "kernels bind-group layout", || {
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("effectcraft kernels"),
@@ -443,45 +424,7 @@ impl GpuContext {
                 immediate_size: 0,
             })
         })?;
-        let pipelines = ENTRIES
-            .iter()
-            .chain(crate::fx_color::KERNELS)
-            .chain(crate::fx_distort::KERNELS)
-            .chain(crate::fx_generate::KERNELS)
-            .chain(crate::fx_key::KERNELS)
-            .chain(crate::fx_stylize::KERNELS)
-            .chain(crate::fx_noise::KERNELS)
-            .chain(crate::fx_tone::KERNELS)
-            .chain(crate::fx_warp::KERNELS)
-            .chain(crate::fx_extra::KERNELS)
-            .chain(crate::fx_depth::KERNELS)
-            .chain(crate::fx_lut::KERNELS)
-            .chain(crate::fx_sim::KERNELS)
-            .chain(crate::fx_particles::KERNELS)
-            .chain(crate::fx_vr::KERNELS)
-            .chain(crate::fx_light::KERNELS)
-            .chain(crate::fx_transition::KERNELS)
-            .chain(crate::fx_text::KERNELS)
-            .chain(crate::fx_time::KERNELS)
-            .chain(crate::fx_pixel2::KERNELS)
-            .chain(crate::fx_gen2::KERNELS)
-            .chain(crate::adv3d::SKY_KERNELS)
-            .map(|e| (e, &layout))
-            .chain(EXT_ENTRIES.iter().map(|e| (e, &layout_ext)))
-            .map(|(e, layout)| {
-                let p = init_resource(&device, e, || {
-                    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                        label: Some(e),
-                        layout: Some(layout),
-                        module: &module,
-                        entry_point: Some(e),
-                        compilation_options: Default::default(),
-                        cache: None,
-                    })
-                })?;
-                Ok((*e, p))
-            })
-            .collect::<Result<HashMap<_, _>, String>>()?;
+        let kernels = crate::pipelines::Kernels::new(&device, layout, layout_ext)?;
         let dmodule = init_resource(&device, "display shader module", || {
             device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("effectcraft display"),
@@ -535,7 +478,7 @@ impl GpuContext {
             max_dim,
             bgl,
             bgl_ext,
-            pipelines,
+            kernels,
             display_bgl,
             display,
             dummy_tex,
@@ -552,7 +495,24 @@ impl GpuContext {
             particle_states: Default::default(),
             deferred: None,
             readbacks,
+            adapter_name: info.name.clone(),
+            backend: format!("{:?}", info.backend),
+            vendor_id: info.vendor,
+            f16_storage,
+            upload_pack: Mutex::new(Vec::new()),
+            pack_tick: std::sync::atomic::AtomicUsize::new(0),
+            pad_cpu: Mutex::new(Vec::new()),
         })
+    }
+
+    /// A compute pipeline by entry point, compiled on first use.
+    pub(crate) fn kernel(&self, entry: &str) -> Option<wgpu::ComputePipeline> {
+        self.kernels.pipeline(&self.device, entry)
+    }
+
+    /// Pipelines compiled so far (eager compositing kernels plus any effect family that has run).
+    pub fn compiled_kernels(&self) -> usize {
+        self.kernels.compiled()
     }
 
     /// Whether this context has observed a readback timeout or device failure.
@@ -667,23 +627,18 @@ impl GpuContext {
     /// A device of its own on the best adapter, without blocking (a browser worker: WebGPU
     /// only; natively any backend). `Err` says why there is none.
     pub async fn request() -> Result<GpuContext, String> {
-        #[allow(unused_mut)]
-        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            // Match eframe's backend override so CLI and headless acceptance tests
-            // exercise the backend requested for the native viewer.
-            desc.backends = wgpu::Backends::from_env().unwrap_or(desc.backends);
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            desc.backends = wgpu::Backends::BROWSER_WEBGPU;
-        }
+        let desc = native_instance_descriptor();
+        let backends = desc.backends;
         let instance = wgpu::Instance::new(desc);
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions { power_preference: wgpu::PowerPreference::HighPerformance, ..Default::default() })
-            .await
-            .map_err(|e| format!("no adapter: {e}"))?;
+        let adapters = instance.enumerate_adapters(backends).await;
+        let adapter = if adapters.is_empty() {
+            instance
+                .request_adapter(&wgpu::RequestAdapterOptions { power_preference: wgpu::PowerPreference::HighPerformance, ..Default::default() })
+                .await
+                .map_err(|e| format!("no adapter: {e}"))?
+        } else {
+            select_native_adapter(&adapters, None)?
+        };
         let limits = adapter.limits();
         let required_limits = wgpu::Limits {
             max_texture_dimension_2d: limits.max_texture_dimension_2d.min(16384),
@@ -770,19 +725,100 @@ impl GpuContext {
     }
 
     /// Upload a CPU image (`None` when it does not fit the device).
+    ///
+    /// Rows whose byte width is not a multiple of 256 (6880×RGBA32 is 128 bytes short) cannot
+    /// use `write_texture` without a padded CPU copy of the whole frame. Those go through a
+    /// tightly packed storage buffer and the `unpack` kernel instead.
     pub fn upload_image(&self, img: &Image) -> Option<GpuImage> {
         if !self.fits(img.width, img.height) {
             return None;
         }
-        self.transfers.count(true, img.data.len() * 16);
+        let src: &[u8] = bytemuck::cast_slice(&img.data);
+        let row = (img.width as usize).checked_mul(16)?;
+        if src.len() != row.checked_mul(img.height as usize)? {
+            log::error!("gpu upload size mismatch");
+            return None;
+        }
+        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
+        let stride = row.checked_add(align - 1)? / align * align;
+        self.transfers.count(true, src.len());
         let g = self.image(img.width, img.height);
+        if stride == row {
+            self.write_tex(&g, src, stride, img.height);
+            return Some(g);
+        }
+        if self.upload_packed(src, &g).is_some() {
+            return Some(g);
+        }
+        let height = img.height as usize;
+        let size = stride.checked_mul(height)?;
+        if size > 1 << 30 {
+            log::error!("gpu upload exceeds buffer budget");
+            return None;
+        }
+        let Ok(mut pad) = self.pad_cpu.lock() else { return None };
+        if pad.len() < size {
+            let extra = size.saturating_sub(pad.len());
+            pad.try_reserve_exact(extra).ok()?;
+            pad.resize(size, 0);
+        }
+        for y in 0..height {
+            let s = y.checked_mul(row)?;
+            let d = y.checked_mul(stride)?;
+            pad.get_mut(d..d + row)?.copy_from_slice(src.get(s..s + row)?);
+        }
+        self.write_tex(&g, &pad[..size], stride, img.height);
+        Some(g)
+    }
+
+    fn write_tex(&self, img: &GpuImage, bytes: &[u8], stride: usize, height: u32) {
         self.queue.write_texture(
-            wgpu::TexelCopyTextureInfo { texture: &g.texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
-            bytemuck::cast_slice(&img.data),
-            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(img.width * 16), rows_per_image: Some(img.height) },
+            wgpu::TexelCopyTextureInfo { texture: &img.texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            bytes,
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(stride as u32), rows_per_image: Some(height) },
             wgpu::Extent3d { width: img.width, height: img.height, depth_or_array_layers: 1 },
         );
-        Some(g)
+    }
+
+    fn packed_upload_buf(&self, bytes: usize) -> Option<wgpu::Buffer> {
+        let size = (bytes as u64).max(16).next_multiple_of(16);
+        if size > self.device.limits().max_buffer_size {
+            return None;
+        }
+        const RING: usize = 4;
+        let mut ring = self.upload_pack.lock().ok()?;
+        let make = || {
+            self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("upload packed"),
+                size,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
+                mapped_at_creation: false,
+            })
+        };
+        if ring.len() < RING {
+            let buf = make();
+            ring.push(buf.clone());
+            return Some(buf);
+        }
+        let i = self.pack_tick.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % RING;
+        let existing = ring.get(i)?;
+        if existing.size() >= size {
+            return Some(existing.clone());
+        }
+        let buf = make();
+        ring[i] = buf.clone();
+        Some(buf)
+    }
+
+    fn upload_packed(&self, src: &[u8], dst: &GpuImage) -> Option<()> {
+        self.kernel("unpack")?;
+        let buf = self.packed_upload_buf(src.len())?;
+        self.queue.write_buffer(&buf, 0, src);
+        let dummy = GpuImage::new(self.dummy.clone(), 1, 1);
+        let mut e = Enc::new(self);
+        e.pixels("unpack", &Params::default(), &dummy, None, dst, Some(&buf));
+        e.submit();
+        Some(())
     }
 
     /// Upload a (layer cache) buffer, reusing the texture while the same `Arc` is alive: static
@@ -838,7 +874,70 @@ impl GpuContext {
         if let Ok(mut s) = self.staging.lock() {
             s.clear();
         }
+        if let Ok(mut p) = self.upload_pack.lock() {
+            p.clear();
+        }
+        if let Ok(mut p) = self.pad_cpu.lock() {
+            p.clear();
+        }
     }
+}
+
+/// wgpu instance for CLI, tests and the desktop viewer: env overrides (`WGPU_BACKEND`,
+/// `WGPU_DX12_COMPILER`) still win; otherwise Windows prefers DX12 then Vulkan (no GL).
+pub fn native_instance_descriptor() -> wgpu::InstanceDescriptor {
+    #[allow(unused_mut)]
+    let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        desc.backends = wgpu::Backends::from_env().unwrap_or_else(preferred_backends);
+        desc.backend_options = wgpu::BackendOptions::from_env_or_default();
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        desc.backends = wgpu::Backends::BROWSER_WEBGPU;
+    }
+    desc
+}
+
+fn preferred_backends() -> wgpu::Backends {
+    #[cfg(target_os = "windows")]
+    {
+        wgpu::Backends::DX12 | wgpu::Backends::VULKAN
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        wgpu::Backends::PRIMARY
+    }
+}
+
+/// Pick a discrete DX12/Metal adapter ahead of Vulkan, and never GL when a real GPU exists.
+/// Used by the headless compositor and the desktop app's egui-wgpu setup.
+pub fn select_native_adapter(adapters: &[wgpu::Adapter], _surface: Option<&wgpu::Surface<'_>>) -> Result<wgpu::Adapter, String> {
+    if adapters.is_empty() {
+        return Err("no adapter".into());
+    }
+    let score = |a: &wgpu::Adapter| -> u32 {
+        let info = a.get_info();
+        if !a.get_downlevel_capabilities().flags.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS) {
+            return 0;
+        }
+        let discrete = match info.device_type {
+            wgpu::DeviceType::DiscreteGpu => 200,
+            wgpu::DeviceType::IntegratedGpu => 80,
+            wgpu::DeviceType::VirtualGpu => 40,
+            _ => 10,
+        };
+        let backend = match info.backend {
+            wgpu::Backend::Dx12 | wgpu::Backend::Metal => 30,
+            wgpu::Backend::Vulkan => 20,
+            wgpu::Backend::BrowserWebGpu => 15,
+            wgpu::Backend::Gl => 0,
+            _ => 0,
+        };
+        discrete + backend
+    };
+    adapters.iter().max_by_key(|a| score(a)).cloned().ok_or_else(|| "no adapter".into())
 }
 
 /// Records GPU work for one render (a command encoder submitted at readback or the end).
@@ -941,7 +1040,7 @@ impl<'g> Enc<'g> {
         ext: Option<[&wgpu::Buffer; 4]>,
     ) {
         let g = self.g;
-        let Some(pipe) = g.pipelines.get(entry) else {
+        let Some(pipe) = g.kernel(entry) else {
             log::error!("gpu: no kernel {entry}");
             return;
         };
@@ -975,7 +1074,7 @@ impl<'g> Enc<'g> {
         let enc = self.encoder();
         {
             let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some(entry), timestamp_writes: None });
-            pass.set_pipeline(pipe);
+            pass.set_pipeline(&pipe);
             pass.set_bind_group(0, &bg, &[]);
             if let Some(b) = &bg_ext {
                 pass.set_bind_group(1, b, &[]);

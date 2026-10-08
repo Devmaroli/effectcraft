@@ -61,7 +61,10 @@ pub fn specs() -> Vec<CommandSpec> {
         fe!("view.res.half", "Half", ["View", "Resolution"], Some("Cmd+Shift+J"), "{}", has_comp),
         fe!("view.res.third", "Third", ["View", "Resolution"], None, "{}", has_comp),
         fe!("view.res.quarter", "Quarter", ["View", "Resolution"], Some("Cmd+Alt+Shift+J"), "{}", has_comp),
+        fe!("view.res.auto", "Auto", ["View", "Resolution"], None, "{}", has_comp),
         fe!("view.res.custom", "Custom...", ["View", "Resolution"], None, "{factor?: 1..40 (render every n-th pixel)}", has_comp),
+        fe!("view.adaptivePlayback", "Auto Resolution While Playing", ["View", "Resolution"], Some("Cmd+Alt+J"), "{value?}", has_comp),
+        fe!("view.performance", "Performance Readout", ["View", "Resolution"], None, "{value?}", always),
         fe!("view.rulers", "Show Rulers", ["View"], Some("Cmd+R"), "{value?}", always),
         fe!("view.panelBackground", "Panel Background Color", [], None, "{color?: black|darkGray|mediumGray|lightGray|white|custom|#hex, pick?: true}", always),
         fe!("view.guides", "Show Guides", ["View"], Some("Cmd+;"), "{value?}", always),
@@ -86,7 +89,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Show Panel",
             [],
             None,
-            "{panel: project|effectControls|composition|layer|timeline|info|audio|preview|effectsPresets|properties|character|paragraph|align|tracker|wiggler|smoother|motionSketch|paint|brushes|renderQueue|flowchart|history|markers|tools|lumetriScopes|footage|mediaBrowser|metadata|progress|contentAwareFill|createNullsFromPaths|vrCompEditor|screenSuite|screenLibrary}",
+            "{panel: project|effectControls|composition|layer|timeline|info|audio|preview|effectsPresets|properties|character|paragraph|align|tracker|wiggler|smoother|motionSketch|paint|brushes|renderQueue|flowchart|history|markers|tools|lumetriScopes|footage|mediaBrowser|metadata|progress|contentAwareFill|createNullsFromPaths|vrCompEditor|screenSuite|screenLibrary, float?: bool, rect?: [x,y,w,h]}",
             always
         ),
         fe!(

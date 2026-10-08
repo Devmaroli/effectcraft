@@ -8,16 +8,16 @@
 ; Built by packaging/windows/package-office.ps1 (and the v* tag workflow):
 ;
 ;   iscc /O<out> /Feffectcraft-Setup-x64 ^
-;        /DMyAppVersion=0.5.0 /DBinDir=<stage> /DIconPath=<ico> ^
+;        /DMyAppVersion=0.6.0-beta /DBinDir=<stage> /DIconPath=<ico> ^
 ;        packaging\windows\effectcraft.iss
 ;
 ; Do not ship portable.txt in this installer: the installed copy uses AppData.
 
 #ifndef MyAppVersion
-  #define MyAppVersion "0.5.0"
+  #define MyAppVersion "0.6.0-beta"
 #endif
 #ifndef MyVersionInfo
-  #define MyVersionInfo "0.5.0"
+  #define MyVersionInfo "0.6.0"
 #endif
 #ifndef BinDir
   #define BinDir "..\..\target\x86_64-pc-windows-msvc\release"
@@ -142,6 +142,60 @@ begin
   while (Length(Path) > 0) and (Path[Length(Path)] = ';') do
     Delete(Path, Length(Path), 1);
   RegWriteExpandStringValue(HKEY_CURRENT_USER, EnvironmentKey, 'Path', Path);
+end;
+
+function CmdLineHasSilentS: Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  for I := 1 to ParamCount do
+    if CompareText(ParamStr(I), '/S') = 0 then
+    begin
+      Result := True;
+      Exit;
+    end;
+end;
+
+function RelaunchSilentParams: String;
+var
+  I: Integer;
+begin
+  Result := '/VERYSILENT /NORESTART /SUPPRESSMSGBOXES';
+  for I := 1 to ParamCount do
+    if CompareText(ParamStr(I), '/S') <> 0 then
+      Result := Result + ' ' + AddQuotes(ParamStr(I));
+end;
+
+procedure RemoveLegacyNsisInstall;
+var
+  Uninst: String;
+  ResultCode: Integer;
+begin
+  { Previous office builds used NSIS (HKCU Uninstall\EffectCraft). Inno Setup writes a
+    different key, so an upgrade left two Add/Remove Programs rows until this cleanup. }
+  if RegQueryStringValue(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\EffectCraft', 'UninstallString', Uninst) then
+  begin
+    Uninst := RemoveQuotes(Uninst);
+    if (Uninst <> '') and FileExists(Uninst) then
+      Exec(Uninst, '/S', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    RegDeleteKeyIncludingSubkeys(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\EffectCraft');
+    RegDeleteKeyIncludingSubkeys(HKEY_CURRENT_USER, 'Software\EffectCraft');
+  end;
+end;
+
+function InitializeSetup: Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := True;
+  if CmdLineHasSilentS and (not WizardSilent) then
+  begin
+    Exec(ExpandConstant('{srcexe}'), RelaunchSilentParams(), '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Result := False;
+    Exit;
+  end;
+  RemoveLegacyNsisInstall;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);

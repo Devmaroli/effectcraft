@@ -48,10 +48,20 @@ Commands (CLI, MCP, control channel):
 - `autoSave.saveOnRenderStart`: Save When Starting Render Queue
 - `composition.showRenderingProgress`: Show Rendering Progress in Info Panel and Flowchart
 - `previews.adaptiveResolutionLimit`: Adaptive Resolution Limit (the lowest resolution Fast Previews ▸
-  Adaptive Resolution drops to while you drag; a playing preview keeps the viewer's resolution)
-- `previews.cacheFramesWhenIdle`: Cache Frames When Idle (Composition ▸ Preview): after a second
-  without input or edits, the viewer renders the work area into the RAM preview in the
-  background, from the current time on, until it is cached or the budget is full
+  Adaptive Resolution and Auto-while-playing drop to)
+- `previews.adaptivePlayback`: Auto resolution while playing (Full → Half → Quarter when behind
+  the clock; restores the chosen resolution when paused or stopped). Default on. Viewer bottom-bar
+  **Auto** toggle (`viewer.autoResToggle`) and View ▸ Resolution ▸ Auto Resolution While Playing
+  (`Cmd+Alt+J`). When off, playback stays at the chosen resolution and drops frames instead.
+- `previews.dropFrames`: Drop frames to keep sound in sync (audio-master clock; late uncached
+  video frames are skipped). Default on.
+- `previews.showPerformance`: View ▸ Performance readout (decode path, GPU/CPU composite,
+  playback fps, dropped frames, cache fill, proxy use)
+- `previews.cacheFramesWhenIdle`: Cache Frames When Idle (Composition ▸ Preview): after a short
+  idle without input or edits, the viewer renders the work area into the RAM preview in the
+  background (green cache bar), from the current time on, until it is cached or the budget is
+  full. Default on. Rendered frames also go to the optional disk cache (`disk.diskCacheEnabled`,
+  `disk.diskCacheMaxGb`).
 - `previews.fastPreviews`: Fast Previews (Draft 3D, Faster Effects)
 - `appearance.theme`: Theme
 - `appearance.brightness`: Brightness
@@ -123,6 +133,8 @@ Commands (CLI, MCP, control channel):
 - `disk.mediaCacheFolder`: audio waveform summaries kept between sessions (`Peaks/`)
 - `disk.conformedMediaFolder`: decoded (conformed) footage audio, written once per file and
   sample rate and read back instead of decoding again
+- `disk.proxyCacheFolder` / `disk.proxyCacheMaxGb`: automatic JPEG half-res proxies for ProRes HQ
+  and oversize files (playback only; renders and EncodeCraft always use the originals)
 - `memory.ramReservedGb`: the cache budgets together leave this much physical memory free
 - `memory.reduceCacheWhenLow`: cache budgets halve while the system is low on memory (checked
   every 30 s by the desktop app, on a background thread)

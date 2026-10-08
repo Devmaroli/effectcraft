@@ -209,11 +209,9 @@ pub fn invoke(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str, params: V
         match id {
             "edit.duplicate" => return run_engine(app, ctx, "project.duplicate", json!({})),
             "edit.selectAll" => {
-                let items: Vec<u64> = crate::panels::project::visible_rows(app)
-                    .into_iter()
-                    .filter(|(id, _)| app.ui.project_search.is_empty() || app.session.project.item(*id).is_some_and(|it| !it.is_folder()))
-                    .map(|(id, _)| id.0)
-                    .collect();
+                let ids = crate::panels::project::selectable_ids(app);
+                let names: Vec<String> = ids.iter().filter_map(|id| app.session.project.item(*id).map(|it| it.name.clone())).collect();
+                let items: Vec<u64> = crate::panels::project_select::select_all_visible(&ids, &names, &app.ui.project_search).iter().map(|i| i.0).collect();
                 return run_engine(app, ctx, "project.select", json!({"items":items}));
             }
             "edit.deselectAll" => return run_engine(app, ctx, "project.select", json!({"items":[]})),
@@ -393,6 +391,18 @@ pub fn invoke(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str, params: V
         app.ui.viewer.res = Resolution::Auto;
         return Ok(Value::Null);
     }
+    if id == "view.adaptivePlayback" {
+        let mut on = app.session.prefs.previews.adaptive_playback;
+        let r = toggle(&mut on, &params);
+        app.set_pref("previews.adaptivePlayback", r.clone())?;
+        return Ok(r);
+    }
+    if id == "view.performance" {
+        let mut on = app.session.prefs.previews.show_performance;
+        let r = toggle(&mut on, &params);
+        app.set_pref("previews.showPerformance", r.clone())?;
+        return Ok(r);
+    }
     if let Some(th) = id.strip_prefix("view.theme.") {
         let k = crate::theme::ThemeKind::from_name(th).ok_or("unknown theme")?;
         app.set_theme(ctx, k);
@@ -522,6 +532,10 @@ pub fn invoke(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str, params: V
             if let Some(r) = file_dialog(app, id, &params) {
                 return r;
             }
+            if id == "file.newCompFromSelection" && no_params(&params) {
+                crate::panels::new_comp_from_sel::open(app)?;
+                return Ok(json!({"dialog": id}));
+            }
             if id == "layer.precompose" && params.get("name").is_none() {
                 crate::panels::precomp::open(app, &params)?;
                 return Ok(json!({"dialog": id}));
@@ -624,6 +638,22 @@ fn toggle(slot: &mut bool, p: &Value) -> Value {
 
 /// Perform a frontend command (from `Event::Frontend`).
 pub fn frontend(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str, p: Value) -> Result<Value, String> {
+    if id == "view.res.auto" {
+        app.ui.viewer.res = Resolution::Auto;
+        return Ok(Value::Null);
+    }
+    if id == "view.adaptivePlayback" {
+        let mut on = app.session.prefs.previews.adaptive_playback;
+        let r = toggle(&mut on, &p);
+        app.set_pref("previews.adaptivePlayback", r.clone())?;
+        return Ok(r);
+    }
+    if id == "view.performance" {
+        let mut on = app.session.prefs.previews.show_performance;
+        let r = toggle(&mut on, &p);
+        app.set_pref("previews.showPerformance", r.clone())?;
+        return Ok(r);
+    }
     let now = ctx.input(|i| i.time);
     let v = &mut app.ui.viewer;
     Ok(match id {
@@ -837,7 +867,13 @@ pub fn frontend(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str, p: Valu
             app.show_panel(panel);
             if p.get("float").and_then(Value::as_bool).unwrap_or(false) {
                 let screen = ctx.content_rect();
-                let rect = if panel == PanelKind::ScreenLibrary {
+                let num = |arr: &[serde_json::Value], i: usize| arr.get(i).and_then(Value::as_f64).map(|v| v as f32);
+                let rect = if let Some(arr) = p.get("rect").and_then(Value::as_array) {
+                    match (num(arr, 0), num(arr, 1), num(arr, 2), num(arr, 3)) {
+                        (Some(x), Some(y), Some(w), Some(h)) => [x, y, w, h],
+                        _ => crate::dock_ui::default_float_rect(screen),
+                    }
+                } else if panel == PanelKind::ScreenLibrary {
                     let c = screen.center();
                     [c.x - 620.0, c.y - 380.0, 1240.0, 760.0]
                 } else {
@@ -1203,6 +1239,9 @@ pub(crate) fn entry_checked(app: &EffectcraftApp, e: &MenuEntry) -> Option<bool>
         "view.res.full" | "view.res.half" | "view.res.third" | "view.res.quarter" => {
             Some(v.res.label().eq_ignore_ascii_case(e.command.trim_start_matches("view.res.")))
         }
+        "view.res.auto" => Some(v.res == Resolution::Auto),
+        "view.adaptivePlayback" => Some(app.session.prefs.previews.adaptive_playback),
+        "view.performance" => Some(app.session.prefs.previews.show_performance),
         "window.workspace" => Some(pstr("name").is_some_and(|n| n == app.ui.workspace)),
         "view.panelBackground" if e.params.get("pick").is_none() => {
             let cur = match v.pasteboard {
@@ -1489,7 +1528,21 @@ pub fn menu_bar(app: &mut EffectcraftApp, ui: &mut egui::Ui) {
                 if let MenuNode::Submenu { label, children } = node {
                     let r = ui.menu_button(crate::i18n::label(app, "", label), |ui| {
                         ui.set_min_width(if label == "Effect" { 200.0 } else { 280.0 });
-                        menu_nodes(app, ui, children, &mut clicked);
+                        // Long menus (Window, Effect) must use the screen height rather than
+                        // egui's ~400pt popup default, then scroll instead of clipping off a
+                        // 1080p display. Short menus still shrink to their content.
+                        let max_h = (ui.ctx().content_rect().height() - 48.0).max(120.0);
+                        let long = children.len() > 16;
+                        let out = if long {
+                            egui::ScrollArea::vertical()
+                                .max_height(max_h)
+                                .min_scrolled_height(max_h)
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| menu_nodes(app, ui, children, &mut clicked))
+                        } else {
+                            egui::ScrollArea::vertical().max_height(max_h).auto_shrink([false, true]).show(ui, |ui| menu_nodes(app, ui, children, &mut clicked))
+                        };
+                        app.auto.add(&format!("menu.{label}.popup"), out.inner_rect, label);
                     });
                     app.auto.add(&format!("menu.{label}"), r.response.rect, label);
                 }
@@ -1542,7 +1595,7 @@ fn menu_nodes(app: &mut EffectcraftApp, ui: &mut egui::Ui, nodes: &[MenuNode], c
             MenuNode::Submenu { label, children } => {
                 let ws = app.ui.workspace.clone();
                 let shown = crate::i18n::submenu(app, label, effectcraft_engine::menus::submenu_label(&app.session, label, &dyn_ctx(&ws, &[])));
-                ui.menu_button((gutter(false), shown.as_str()), |ui| {
+                let inner = ui.menu_button((gutter(false), shown.as_str()), |ui| {
                     ui.set_min_width(if children.len() > 30 { 200.0 } else { 240.0 });
                     // Long submenus (Blending Mode, effect categories) scroll instead of running
                     // off the screen. Others show whole: egui sizes a new submenu from a default
@@ -1551,6 +1604,7 @@ fn menu_nodes(app: &mut EffectcraftApp, ui: &mut egui::Ui, nodes: &[MenuNode], c
                     let max_h = ui.ctx().content_rect().height() - 40.0;
                     egui::ScrollArea::vertical().max_height(max_h).min_scrolled_height(max_h).show(ui, |ui| menu_nodes(app, ui, children, clicked));
                 });
+                app.auto.add(&format!("menu.submenu.{label}"), inner.response.rect, &shown);
             }
             MenuNode::Item(e) => {
                 if menu_entry(app, ui, e) {
@@ -1573,13 +1627,20 @@ fn gutter(checked: bool) -> egui::Atom<'static> {
     (if checked { "✔" } else { "" }).atom_size(egui::vec2(14.0, 14.0))
 }
 
-fn menu_entry(app: &EffectcraftApp, ui: &mut egui::Ui, e: &MenuEntry) -> bool {
+fn menu_entry(app: &mut EffectcraftApp, ui: &mut egui::Ui, e: &MenuEntry) -> bool {
     let label = entry_label(app, e);
-    let mut b = egui::Button::new((gutter(entry_checked(app, e) == Some(true)), label));
+    let mut b = egui::Button::new((gutter(entry_checked(app, e) == Some(true)), label.as_str()));
     if let Some(s) = entry_shortcut(app, e) {
         b = b.shortcut_text(shortcut_text(&s));
     }
-    ui.add_enabled(entry_enabled(app, e), b).clicked()
+    let r = ui.add_enabled(entry_enabled(app, e), b);
+    app.auto.add(&format!("menu.entry.{}", e.label), r.rect, &e.label);
+    if e.command == "window.panel"
+        && let Some(panel) = e.params.get("panel").and_then(Value::as_str)
+    {
+        app.auto.add(&format!("menu.window.{panel}"), r.rect, &e.label);
+    }
+    r.clicked()
 }
 
 #[cfg(test)]
@@ -1649,5 +1710,15 @@ mod tests {
     fn menu_items_cover_the_tree() {
         assert_eq!(menus().last(), Some(&"Help"));
         assert!(effectcraft_engine::menus::entries().len() > 500);
+    }
+
+    #[test]
+    fn adaptive_playback_shortcut_shows_ctrl_alt_j_off_macos() {
+        let shown = shortcut_text("Cmd+Alt+J");
+        if cfg!(target_os = "macos") {
+            assert!(shown.contains('⌘') && shown.contains('⌥') && shown.contains('J'), "{shown}");
+        } else {
+            assert_eq!(shown, "Ctrl+Alt+J");
+        }
     }
 }

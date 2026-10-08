@@ -26,6 +26,13 @@ administrator rights, and adds Start menu and desktop shortcuts. That
 installed copy does not include portable.txt, so its settings stay in
 AppData. You can optionally put effectcraft-cli on your user PATH.
 
+Silent install (same switch as the older NSIS setup):
+
+  effectcraft-Setup-x64.exe /S
+
+/SILENT and /VERYSILENT also work. An older NSIS uninstall entry is
+removed so Windows shows one EffectCraft in Apps & features.
+
 How to open EffectCraft
 -----------------------
 1. Open the folder in File Explorer.

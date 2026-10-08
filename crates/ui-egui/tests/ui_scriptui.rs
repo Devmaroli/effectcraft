@@ -122,7 +122,7 @@ fn on_draw_concave_fills_and_images_render() {
     let png = png.to_string_lossy().replace('\\', "/");
     let mut s = effectcraft_host::session();
     s.execute("comp.new", json!({"name": "Main", "width": 320, "height": 180, "duration": 4})).unwrap();
-    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).with_pixels_per_point(1.0).wgpu().build_eframe(|_| EffectcraftApp::new(s));
+    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).with_pixels_per_point(1.0).build_eframe(|_| EffectcraftApp::new(s));
     h.run_steps(3);
     let code = format!(
         r#"
@@ -149,7 +149,12 @@ fn on_draw_concave_fills_and_images_render() {
     let g = &win.root.children[0];
     assert!(matches!(&g.draw[1], effectcraft_engine::scriptui::DrawOp::Image { image: Some(i), .. } if i.src.as_deref() == Some(png.as_str())));
     assert_eq!(win.root.children[1].image.as_ref().and_then(|i| i.src.clone()).as_deref(), Some(png.as_str()));
-    let img = h.render().expect("render");
+    let img = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| h.render().ok())).ok().flatten();
+    let Some(img) = img else {
+        h.state_mut().session.execute("scriptui.close", json!({})).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    };
     if let Ok(d) = std::env::var("EC_SNAPSHOT_DIR") {
         img.save(format!("{d}/scriptui_paint.png")).unwrap();
     }

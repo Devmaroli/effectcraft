@@ -80,7 +80,7 @@ impl Exporter for FileExporter {
 
 /// A new session with media, import, expressions, scripting and export enabled.
 pub fn session() -> Session {
-    Session {
+    let s = Session {
         // The desktop app, the CLI and the MCP server share installed Roto Brush models.
         models_dir: config_dir().map(|d| d.join("models")),
         exporter: Some(Arc::new(FileExporter::default())),
@@ -92,7 +92,10 @@ pub fn session() -> Session {
         script_ui: effectcraft_engine::scriptui::ScriptUi { dispatch: Some(effectcraft_script::dispatch_ui), ..Default::default() },
         plugin_loader: effectcraft_plugin::wasm_available().then_some(effectcraft_plugin::loader as effectcraft_engine::PluginLoader),
         ..Default::default()
-    }
+    };
+    s.playback_caps.install_rayon();
+    effectcraft_media::hwdec::register();
+    s
 }
 
 /// The platform config directory for EffectCraft.

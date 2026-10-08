@@ -1072,7 +1072,11 @@ View
     Half | view.res.half
     Third | view.res.third
     Quarter | view.res.quarter
+    Auto | view.res.auto
     Custom... | view.res.custom
+    ---
+    Auto Resolution While Playing | view.adaptivePlayback
+    Performance Readout | view.performance
   ---
   Use Display Color Management | view.displayColorManagement
   Simulate Output
@@ -1175,6 +1179,9 @@ Window
   Assign Shortcut to Workspace
     @dynamic:workspaceShortcuts
   ---
+  Screen Suite | window.panel {"panel":"screenSuite"}
+  Screen Library | window.panel {"panel":"screenLibrary"}
+  ---
   Align | window.panel {"panel":"align"}
   Audio | window.panel {"panel":"audio"} | Cmd+4
   Brushes | window.panel {"panel":"brushes"} | Cmd+9
@@ -1212,8 +1219,6 @@ Window
   ---
   Create Nulls From Paths | window.panel {"panel":"createNullsFromPaths"}
   VR Comp Editor | window.panel {"panel":"vrCompEditor"}
-  Screen Suite | window.panel {"panel":"screenSuite"}
-  Screen Library | window.panel {"panel":"screenLibrary"}
   @dynamic:scriptPanels
 Help
   EffectCraft Help... | help.docs {"page":"help"} | F1

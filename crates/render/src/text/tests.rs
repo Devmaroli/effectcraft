@@ -97,6 +97,15 @@ fn range_based_on_words_and_lines() {
     set(l, "text/animators/#1/selectors/#1/end", Value::Scalar(3.0));
     let s = selection(&p, cid, 0.0, a);
     assert_eq!(s, vec![0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0], "{s:?}");
+    // Characters (keep joins) is Based On index 4 and still selects by unit.
+    let l = &mut p.comp_mut(cid).unwrap().layers[0];
+    set(l, "text/animators/#1/selectors/#1/advanced/basedOn", Value::Enum(4));
+    set(l, "text/animators/#1/selectors/#1/advanced/units", Value::Enum(0));
+    set(l, "text/animators/#1/selectors/#1/start", Value::Scalar(0.0));
+    set(l, "text/animators/#1/selectors/#1/end", Value::Scalar(50.0));
+    let s = selection(&p, cid, 0.0, a);
+    assert_eq!(s.len(), 7, "{s:?}");
+    assert!(s.iter().any(|v| *v > 0.0) && s.contains(&0.0), "keep-joins selector still ranges: {s:?}");
 }
 
 #[test]

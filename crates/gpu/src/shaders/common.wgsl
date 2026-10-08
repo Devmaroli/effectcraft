@@ -14,7 +14,12 @@ struct Params {
 @group(0) @binding(0) var<uniform> P: Params;
 @group(0) @binding(1) var src: texture_2d<f32>;
 @group(0) @binding(2) var aux: texture_2d<f32>;
+@group(0) @binding(3) var out: texture_storage_2d<rgba32float, write>;
 @group(0) @binding(4) var<storage, read> data: array<f32>;
+
+fn out_dims() -> vec2<i32> {
+    return vec2<i32>(textureDimensions(out));
+}
 
 // `a` mod `n` in [0, n) for n > 0 (floored). Never `%` on a negative operand: WGSL's `%` truncates,
 // but naga's GLSL output is plain `%`, undefined for negative operands (wrong on Mesa's GL).

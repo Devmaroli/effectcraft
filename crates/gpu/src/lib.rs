@@ -1,5 +1,6 @@
 //! The EffectCraft GPU compositor (Mercury GPU Acceleration's counterpart), on wgpu compute
-//! shaders: Metal, Vulkan, Direct3D 12 and WebGPU.
+//! shaders: Metal, Vulkan, Direct3D 12 and WebGPU. On Windows the compositor prefers a discrete
+//! DX12 adapter (Vulkan is the fallback; `WGPU_BACKEND` still overrides).
 //!
 //! The CPU [`Renderer`] stays the reference and keeps rendering layer *content* (sources, masks,
 //! CPU effects, layer styles) into its layer cache. [`Gpu`] composites: it uploads the cached
@@ -37,10 +38,11 @@
 //! RGBA f32 images per layer, and creating and zeroing those cost more than compositing a small
 //! layer. A released texture is reused once every encoder that could still read it has been
 //! submitted. 8/16 bpc quantisation after each layer is fused into that layer's composite.
-//! [`Backend::Auto`](effectcraft_render::Backend) renders each comp on whichever compositor
-//! measured faster for it ([`effectcraft_render::AutoPick`], kept by [`Gpu`]): a light comp
-//! that the CPU composites in a millisecond stays there rather than paying for a full-frame
-//! readback.
+//! Compute kernels for the 2D composite compile at device init; effect families compile on first
+//! use. [`Backend::Auto`](effectcraft_render::Backend) renders each comp on whichever compositor
+//! measured faster for it ([`effectcraft_render::AutoPick`], kept by [`Gpu`]): a light comp that
+//! the CPU composites in a millisecond stays there rather than paying for a full-frame readback,
+//! and EncodeCraft readback that loses to the CPU is not used.
 //!
 //! GPU particles (`particles`): the stepped particle effects hand their simulation to
 //! [`effectcraft_effects::psim::ParticleSim`], implemented here with one invocation per particle
@@ -49,7 +51,12 @@
 //! Plug a [`Gpu`] into [`Renderer::accel`] (it implements [`Accelerator`]); renders then use it
 //! when [`RenderOpts::backend`](effectcraft_render::RenderOpts) asks for it. The viewer can
 //! skip readback entirely with [`Gpu::render_display`], which leaves an RGBA8 texture for
-//! egui-wgpu to draw.
+//! egui-wgpu to draw. Playback presents that 8-bit texture; working textures stay `Rgba32Float`
+//! so 32-bpc renders keep headroom (Advanced 3D colour is `Rgba16Float` when the adapter
+//! supports it). EncodeCraft streaming and other GPU presenters should call
+//! [`Gpu::render_display`] / [`Accelerator::comp_frame`] rather than a second compositor. Single
+//! untransformed footage layers skip the composite walk ([`Renderer::simple_footage_canvas`])
+//! and upload the decoded frame directly.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
@@ -81,12 +88,13 @@ mod fx_vr;
 mod fx_warp;
 mod ops;
 mod particles;
+mod pipelines;
 mod readback;
 mod walk;
 
 use std::sync::Arc;
 
-pub use context::{GpuContext, GpuImage, TransferStats};
+pub use context::{GpuContext, GpuImage, TransferStats, native_instance_descriptor, select_native_adapter};
 use effectcraft_effects::Buf;
 use effectcraft_project::ItemId;
 use effectcraft_raster::Image;
@@ -95,6 +103,16 @@ use effectcraft_time::Tick;
 pub use wgpu;
 
 use crate::context::Enc;
+
+/// wgpu adapter snapshot for the playback capability probe.
+#[derive(Clone, Debug)]
+pub struct AdapterCaps {
+    pub name: String,
+    pub backend: String,
+    pub vendor_id: u32,
+    pub f16_storage: bool,
+    pub nvidia: bool,
+}
 
 /// The GPU compositor (cheap to clone; one device shared by all clones).
 #[derive(Clone)]
@@ -171,8 +189,40 @@ impl Gpu {
         &self.ctx
     }
 
+    /// Compute pipelines compiled so far (eager compositing kernels; effect families on first use).
+    pub fn compiled_kernels(&self) -> usize {
+        self.ctx.compiled_kernels()
+    }
+
+    /// CPU wins the Auto choice only when it is clearly faster ([`effectcraft_render::AutoPick::MARGIN`]).
+    pub fn gpu_wins(cpu_ms: f64, gpu_ms: f64) -> bool {
+        gpu_ms > 0.0 && cpu_ms >= gpu_ms * effectcraft_render::AutoPick::MARGIN
+    }
+
+    /// Adapter snapshot for the playback capability probe (never panics).
+    pub fn adapter_caps(&self) -> AdapterCaps {
+        let c = &self.ctx;
+        AdapterCaps {
+            name: c.adapter_name.clone(),
+            backend: c.backend.clone(),
+            vendor_id: c.vendor_id,
+            f16_storage: c.f16_storage,
+            nvidia: c.vendor_id == 0x10DE || c.adapter_name.to_ascii_lowercase().contains("nvidia"),
+        }
+    }
+
     pub fn device(&self) -> &wgpu::Device {
         &self.ctx.device
+    }
+
+    /// Whether a full-frame composite of `width`×`height` is likely to fit on this device.
+    ///
+    /// EncodeCraft's office card is an 8 GB RTX 3070 Ti; a 6880×1032 DOOH frame is well inside
+    /// that. Oversized comps (or a tiny `max_texture_dimension_2d`) fall back to the CPU rather
+    /// than risking an OOM reset. The budget is 6 GiB of working set so 2 GiB stays for the OS
+    /// and other apps.
+    pub fn can_composite(&self, width: u32, height: u32) -> bool {
+        composite_budget_ok(width, height, self.device().limits().max_texture_dimension_2d, 6 * (1u64 << 30))
     }
 
     /// Render a top-level comp frame and leave it on the GPU as a display texture (no
@@ -359,6 +409,17 @@ impl effectcraft_effects::psim::ParticleSim for Gpu {
         self.ctx.check_health().ok()?;
         particles::simulate(&self.ctx, req)
     }
+}
+
+/// Working-set check for [`Gpu::can_composite`]: `width`/`height` must fit in `max_dim`, and
+/// sixteen full-frame RGBA f32 textures (layers, mattes, readback) must fit in `budget_bytes`.
+pub fn composite_budget_ok(width: u32, height: u32, max_dim: u32, budget_bytes: u64) -> bool {
+    if width == 0 || height == 0 || width > max_dim || height > max_dim {
+        return false;
+    }
+    let frame = (width as u64).saturating_mul(height as u64).saturating_mul(16);
+    let working = frame.saturating_mul(16);
+    working > 0 && working <= budget_bytes
 }
 
 #[cfg(test)]

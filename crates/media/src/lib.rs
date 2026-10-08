@@ -6,27 +6,37 @@
 //!   (premultiplied f32, sRGB/Rec.709-encoded values, as the compositor expects) with a
 //!   memory-budgeted LRU frame cache, one decoder per source, and the decoder kept positioned for
 //!   sequential playback. Sequential playback decodes several frames ahead (default
-//!   [`DEFAULT_PREFETCH_DEPTH`]); Half/Quarter preview may cache movie frames already
-//!   downsampled. Decode is FilmCraft's pure-Rust software path (no hardware video decode). Also
-//!   audio ([`MediaPool::audio_samples`]) and thumbnails.
+//!   [`DEFAULT_PREFETCH_DEPTH`]); Half/Quarter preview asks FilmCraft for a reduced-resolution
+//!   frame (`FrameRequest.scale`) and, if the decoder still returns native pixels, converts only
+//!   the preview-sized samples so RAM does not keep a full f32 frame. Hardware decode is probed in
+//!   [`hwdec`] (D3D11VA / Vulkan Video) and falls
+//!   back to FilmCraft's CPU path automatically. Also audio ([`MediaPool::audio_samples`]) and
+//!   thumbnails.
 //!
 //! Video containers (MP4/MOV, Matroska/WebM) and codecs (H.264, HEVC, VP9, AV1, ProRes, DNxHD,
 //! MJPEG; AAC, Opus, PCM, MP3/FLAC/Vorbis) come from FilmCraft's pure-Rust crates (git dependency,
 //! pinned; `plan/adr/0001`). FilmCraft types never leave this crate. Stills use the `image` crate
 //! (PNG, JPEG, GIF, WebP, TIFF, BMP, OpenEXR); Photoshop documents (merged image or one layer) come
-//! from `effectcraft-psd` and SVG from `effectcraft-svg` (rasterised at any scale).
+//! from `effectcraft-psd` and SVG from `effectcraft-svg` (rasterised at any scale). Movies are
+//! opened through a [`stream::FileReader`] (no whole-file `fs::read`) unless the bytes are already
+//! in memory. Hardware decode is probed in [`hwdec`] and falls back to FilmCraft's CPU path.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod convert;
 pub mod exr_channels;
+pub mod hwdec;
 mod layered;
 pub use layered::vector_doc;
 mod pool;
 mod probe;
+pub mod proxy_cache;
+pub mod stream;
 
 pub use pool::{DEFAULT_BUDGET, DEFAULT_PREFETCH_DEPTH, MediaPool, PoolStats};
 pub use probe::{DEFAULT_SEQUENCE_RATE, probe, probe_bytes, probe_model, probe_single, sequence_files};
+pub use proxy_cache::{ProxyCache, ProxyJob, ProxyStatus};
+pub use stream::FileReader;
 
 /// Errors from probing or decoding footage.
 #[derive(Debug, thiserror::Error)]
@@ -77,4 +87,12 @@ pub(crate) fn ext_of(path: &std::path::Path) -> String {
 
 pub(crate) fn rate_from_fc(r: filmcraft_time::FrameRate) -> effectcraft_time::FrameRate {
     if r.num > 0 && r.den > 0 { effectcraft_time::FrameRate::new(r.num, r.den) } else { effectcraft_time::FrameRate::FPS_30 }
+}
+
+/// Prefetch depth from frame bytes, RAM and the pool budget (2–32).
+pub fn prefetch_depth(bytes_per_frame: usize, ram_available: u64, budget: usize) -> usize {
+    let bpf = bytes_per_frame.max(1);
+    let from_budget = budget / bpf;
+    let from_ram = (ram_available / 8).saturating_div(bpf as u64) as usize;
+    from_budget.min(from_ram).clamp(2, 32)
 }

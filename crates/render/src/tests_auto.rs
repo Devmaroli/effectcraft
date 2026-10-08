@@ -101,6 +101,14 @@ fn auto_backend_moves_light_comps_to_the_cpu() {
 }
 
 #[test]
+fn gpu_wins_margin_keeps_ties_on_the_gpu() {
+    assert!(AutoPick::gpu_wins(10.0, 10.0));
+    assert!(AutoPick::gpu_wins(10.0, 8.0));
+    assert!(!AutoPick::gpu_wins(10.0, 20.0));
+    assert!(!AutoPick::gpu_wins(10.0, 0.0));
+}
+
+#[test]
 fn auto_backend_keeps_fast_accelerators() {
     // As fast as the CPU (ties stay on the accelerator): every frame but the CPU warm-up and
     // re-probes.

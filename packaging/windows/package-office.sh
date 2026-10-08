@@ -104,6 +104,7 @@ elif command -v makensis >/dev/null; then
   rm -f "$Setup"
   makensis -V2 \
     -DVERSION="$VERSION" \
+    -DVERSIONINFO="${VERSION%%-*}" \
     "-DBINDIR=$Stage" \
     "-DICONPATH=$Icon" \
     "-DOUTFILE=$Setup" \

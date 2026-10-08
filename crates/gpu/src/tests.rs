@@ -635,6 +635,54 @@ fn backend_selection_and_display_frames() {
     }
 }
 
+#[test]
+fn display_path_runs_without_a_cpu_readback_of_the_canvas() {
+    let Some(g) = gpu() else { return };
+    let before = g.context().transfer_stats();
+    let s = blend_scene(BitDepth::Bpc8, BlendMode::Normal);
+    let mut r = Renderer::new(&s.p, &Pattern, RenderOpts { backend: Backend::Gpu, ..opts() });
+    r.accel = Some(g);
+    assert!(g.render_display(&r, s.cid, Tick::ZERO).is_some());
+    g.wait();
+    let after = g.context().transfer_stats();
+    assert_eq!(after.readbacks, before.readbacks, "viewer present must not read the canvas back");
+}
+
+#[test]
+fn unaligned_upload_roundtrips() {
+    let Some(g) = gpu() else { return };
+    // 100×2 RGBA f32 rows are 1600 bytes; wgpu copies need 256-byte row alignment.
+    let mut img = Image::new(100, 2);
+    img.data[0] = [0.1, 0.2, 0.3, 1.0];
+    img.data[99] = [0.4, 0.5, 0.6, 1.0];
+    img.data[100] = [0.7, 0.8, 0.9, 1.0];
+    let up = g.ctx.upload_image(&img).expect("unaligned upload");
+    let mut e = crate::context::Enc::new(&g.ctx);
+    let down = e.download(&up).expect("readback");
+    assert_eq!(down.width, 100);
+    for i in [0usize, 99, 100] {
+        for c in 0..4 {
+            assert!((down.data[i][c] - img.data[i][c]).abs() < 1e-5, "px {i}: {:?} vs {:?}", down.data[i], img.data[i]);
+        }
+    }
+}
+
+#[test]
+fn gpu_wins_uses_auto_margin() {
+    assert!(Gpu::gpu_wins(33.0, 20.0));
+    assert!(!Gpu::gpu_wins(33.0, 154.0));
+    assert!(Gpu::gpu_wins(20.0, 20.0));
+}
+
+#[test]
+fn eager_init_does_not_compile_every_effect_family() {
+    let Some(g) = gpu() else { return };
+    let n = g.compiled_kernels();
+    let eager = crate::pipelines::EAGER.len();
+    assert!(n >= eager, "eager kernels missing ({n} < {eager})");
+    assert!(n <= eager + 4, "init compiled {n} kernels; effect families should stay lazy");
+}
+
 /// Browsers' WGSL compilers reject an f32 literal whose exact decimal value lies outside the f32
 /// range (`3.40282347e38` rounds to f32::MAX in Rust but exceeds it), which invalidates the whole
 /// module (every kernel); naga accepts it, so native runs can't catch it. Every float literal
@@ -720,4 +768,15 @@ fn dooh_like_stack_matches_cpu() {
         check(&format!("dooh-like {depth:?}"), compare_at(&s, opts(), Tick::ZERO), 0.0);
         check(&format!("dooh-like {depth:?} half"), compare_at(&s, RenderOpts { scale: 0.5, ..opts() }, Tick::ZERO), 0.0);
     }
+}
+
+/// An 8 GB-class card (RTX 3070 Ti) composites 6880×1032; a texture-dimension or VRAM miss falls back.
+#[test]
+fn composite_budget_covers_dooh_and_rejects_oversized() {
+    let budget = 6 * (1u64 << 30);
+    assert!(crate::composite_budget_ok(6880, 1032, 8192, budget));
+    assert!(crate::composite_budget_ok(6880, 1032, 16384, budget));
+    assert!(!crate::composite_budget_ok(6880, 1032, 4096, budget));
+    assert!(!crate::composite_budget_ok(0, 1080, 8192, budget));
+    assert!(!crate::composite_budget_ok(1920, 1080, 8192, 1));
 }

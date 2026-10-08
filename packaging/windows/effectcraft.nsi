@@ -7,11 +7,14 @@
 ; Used when Inno Setup is not available (Linux makensis). The GitHub tag
 ; workflow compiles the Inno script on windows-latest.
 ;
-;   makensis -DVERSION=0.5.0 -DBINDIR=<stage> -DICONPATH=<ico> -DOUTFILE=<exe> \
+;   makensis -DVERSION=0.6.0-beta -DBINDIR=<stage> -DICONPATH=<ico> -DOUTFILE=<exe> \
 ;            packaging/windows/effectcraft.nsi
 
 !ifndef VERSION
-  !define VERSION "0.5.0"
+  !define VERSION "0.6.0-beta"
+!endif
+!ifndef VERSIONINFO
+  !define VERSIONINFO "0.6.0"
 !endif
 !ifndef BINDIR
   !define BINDIR "..\..\target\x86_64-pc-windows-gnu\release"
@@ -35,7 +38,7 @@ InstallDirRegKey HKCU "Software\EffectCraft" "InstallDir"
 ShowInstDetails show
 ShowUninstDetails show
 
-VIProductVersion "${VERSION}.0"
+VIProductVersion "${VERSIONINFO}.0"
 VIAddVersionKey "ProductName" "EffectCraft"
 VIAddVersionKey "FileDescription" "EffectCraft motion graphics and visual effects"
 VIAddVersionKey "FileVersion" "${VERSION}"

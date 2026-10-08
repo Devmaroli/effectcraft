@@ -14,6 +14,38 @@ pub(crate) fn label<'a>(app: &EffectcraftApp, command: &str, source: &'a str) ->
     if japanese(app) { JAPANESE.iter().find(|(id, en, _)| *id == command && *en == source).map(|(_, _, ja)| *ja).unwrap_or(source) } else { source }
 }
 
+/// Character / Paragraph panel strings (English default; Japanese when the UI language is ja).
+pub(crate) fn panel<'a>(app: &EffectcraftApp, en: &'a str) -> &'a str {
+    if japanese(app) { PANEL_JA.iter().find(|(e, _)| *e == en).map(|(_, ja)| *ja).unwrap_or(en) } else { en }
+}
+
+const PANEL_JA: &[(&str, &str)] = &[
+    ("Ligatures", "合字"),
+    ("Arabic fallback", "アラビア語フォールバック"),
+    ("Used for Arabic letters {font} doesn't have.", "{font} にないアラビア文字に使います。"),
+    ("Digits", "数字"),
+    ("Western (50)", "西欧数字 (50)"),
+    ("Arabic-Indic (٥٠)", "アラビア数字 (٥٠)"),
+    ("How typed 0-9 are drawn in the selection.", "選択範囲の 0–9 の字形。"),
+    ("Keep Arabic letters joined", "アラビア文字の接続を維持"),
+    ("Tracking stretches Arabic words with kashida.", "トラッキングはカシダでアラビア語を伸ばします。"),
+    ("Direction", "方向"),
+    ("LTR", "LTR"),
+    ("RTL", "RTL"),
+    ("Auto", "自動"),
+    ("Auto: first strong letter sets the direction.", "自動: 最初の強い文字で方向を決めます。"),
+    ("Roman Hanging Punctuation", "欧文ぶら下げ"),
+    ("Stretch with kashida (tatweel)", "カシダで揃える (tatweel)"),
+    ("All", "すべて"),
+    ("Arabic", "アラビア語"),
+    ("No Arabic · uses fallback", "アラビア語なし · フォールバック"),
+    ("Search fonts", "フォントを検索"),
+    ("Recent", "最近"),
+    ("All fonts", "すべてのフォント"),
+    ("Characters (keep joins)", "文字（接続を維持）"),
+    ("NEW", "NEW"),
+];
+
 pub(crate) fn entry(app: &EffectcraftApp, e: &MenuEntry, shown: String) -> String {
     if !japanese(app) {
         return shown;
@@ -548,6 +580,9 @@ const JAPANESE: &[(&str, &str, &str)] = &[
     ("view.res.third", "Third", "1/3画質"),
     ("view.res.quarter", "Quarter", "1/4画質"),
     ("view.res.custom", "Custom...", "カスタム..."),
+    ("view.res.auto", "Auto", "自動"),
+    ("view.adaptivePlayback", "Auto Resolution While Playing", "再生中に解像度を自動調整"),
+    ("view.performance", "Performance Readout", "パフォーマンス表示"),
     ("view.displayColorManagement", "Use Display Color Management", "ディスプレイカラーマネジメントを使用"),
     ("", "Simulate Output", "出力をシミュレート"),
     ("view.simulateOutput", "No Output Simulation", "出力シミュレーションなし"),

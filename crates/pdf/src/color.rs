@@ -202,11 +202,10 @@ fn ps_parse(lx: &mut crate::object::Lexer, depth: usize) -> Vec<PsOp> {
         match o {
             Obj::Num(n) => out.push(PsOp::Num(n)),
             Obj::Bool(b) => out.push(PsOp::Num(if b { 1.0 } else { 0.0 })),
-            Obj::Op(op) if op == "{" => {
-                if depth < 32 {
-                    out.push(PsOp::Proc(ps_parse(lx, depth + 1)));
-                }
+            Obj::Op(op) if op == "{" && depth < 32 => {
+                out.push(PsOp::Proc(ps_parse(lx, depth + 1)));
             }
+            Obj::Op(op) if op == "{" => {}
             Obj::Op(op) if op == "}" => return out,
             Obj::Op(op) => out.push(PsOp::Op(op)),
             _ => {}

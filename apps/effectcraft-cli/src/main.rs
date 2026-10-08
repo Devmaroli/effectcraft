@@ -15,18 +15,25 @@
 //!     [--jpeg-quality N] [--bitrate KBPS] [--prores proxy|lt|standard|hq|4444|4444xq] [--audio auto|on|off]
 //!     [--profile main|main10] [--level auto|4.1] [--rate-control bitrate|quality] [--video-quality 1-100]
 //!     [--keyint FRAMES] [--webm-codec vp9|av1] [--audio-bitrate KBPS] [--opus-app audio|voice]
+//! effectcraft-cli render [--comp C] --out -|--out PIPE --format yuv420p|rgb24|rgba [--pix-fmt F] [--sidecar JSON]
+//!     [--audio-out FILE|-] [--audio-only] [--gpu]   stream raw frames (no temp movie) for FFmpeg
 //! effectcraft-cli render F.ecproj --queue                    render the project's Render Queue
+//! effectcraft-cli serve [--control PORT] [--idle-exit SECS] [--gpu] [--project F.ecproj]
+//!     long-lived render process; JSON-lines on 127.0.0.1 (see docs/render-streaming.md)
 //! effectcraft-cli bench [--comp C] [--time S] [--scale K] [--n N] [--play N] [--gpu [--adv3d]]   render timings
 //!     (--gpu: CPU vs GPU ms/frame for every comp at Full and Half)
 //! effectcraft-cli bench --ops [--small] [--layers N] [--comps N] [--footage N]   everyday-operation timings
 //!     on a large generated project (open, save, auto-save, undo/redo, timeline, Project panel)
+//! effectcraft-cli bench --playback-profile [--play N] [--gpu] [--json] [--out FILE]
+//!     decode / composite / upload / e2e timings for ProRes HQ 6880×1032, H.264 1080p, 4-layer comps
 //! effectcraft-cli script FILE.jsx [F.ecproj] | --eval CODE    run an After Effects-style script
 //! effectcraft-cli mcp [--bridge PORT]                         MCP server on stdio
 //!
 //! Project:  --project F.ecproj (or a positional *.ecproj) | --demo | --empty   (default: demo; mcp: empty)
 //! Saving:   --save (back to --project) | --save-as F.ecproj
-//! GPU:      --gpu renders on the GPU compositor (Mercury GPU Acceleration) when an adapter exists;
-//!           the default is the CPU (Mercury Software Only)
+//! GPU:      --gpu renders on the GPU compositor (Mercury GPU Acceleration) when an adapter exists
+//!           and the frame fits (8 GB-class VRAM at 6880×1032 included); otherwise the CPU, with a
+//!           JSON `gpu` event on stderr. The default is the CPU (Mercury Software Only).
 //! Bridge:   --bridge PORT drives a running `effectcraft --control PORT` instead of a headless session
 //! Output:   --json for one compact JSON document on stdout (errors: {"error": …}, exit 1)
 //! ```
@@ -41,6 +48,8 @@ use std::io::Write;
 use effectcraft_automation::tools::{self, Reply};
 use effectcraft_automation::{Backend, McpServer};
 use serde_json::{Value, json};
+
+mod playback_profile;
 
 /// `println!` that never panics: see [`write_line`].
 macro_rules! say {
@@ -84,7 +93,7 @@ fn stdout_broken() -> bool {
     STDOUT_FAILED.get().is_some_and(|k| *k != std::io::ErrorKind::BrokenPipe)
 }
 
-const USAGE: &str = "usage: effectcraft-cli <info|commands|exec|run|props|get|set|render-frame|render|script|mcp> [args] [--json]
+const USAGE: &str = "usage: effectcraft-cli <info|commands|exec|run|props|get|set|render-frame|render|serve|script|mcp> [args] [--json]
   info                                     project + engine summary
   commands [--filter TEXT] [--enabled]     list engine commands
   exec <command-id> [--params JSON]        run one engine command (exec --list: list them, as `commands`)
@@ -99,7 +108,10 @@ const USAGE: &str = "usage: effectcraft-cli <info|commands|exec|run|props|get|se
          [--profile main|main10] [--level auto|4.1] [--rate-control bitrate|quality] [--video-quality N]
          [--keyint FRAMES] [--webm-codec vp9|av1] [--audio-bitrate KBPS] [--opus-app audio|voice] | --queue
                                            (formats h264|hevc|av1|prores|webm|png|jpeg|tiff|exr|gif|wav|aiff;
-                                           --profile..--keyint: HEVC / AV1, --audio-bitrate/--opus-app: WebM Opus)
+                                           streaming: yuv420p|rgb24|rgba|raw to --out - or a pipe, --sidecar JSON,
+                                           --audio-out FILE, --audio-only; --profile..--keyint: HEVC / AV1)
+  serve [--control PORT] [--idle-exit S] [--gpu] [--project F]
+                                           warm render server (JSON-lines on 127.0.0.1; PORT 0 = ephemeral)
   bench [--comp C] [--time S] [--scale K] [--n N] [--play N] [--gpu [--adv3d]]   per-layer/effect render timings;
                                            --play N renders N consecutive frames with/without the layer cache;
                                            --gpu compares CPU and GPU ms/frame for every comp at Full and Half
@@ -109,11 +121,15 @@ const USAGE: &str = "usage: effectcraft-cli <info|commands|exec|run|props|get|se
   bench --ops [--small] [--layers N] [--comps N] [--footage N]
                                            everyday operations on a large generated project: startup, open,
                                            save, auto-save, edits + undo/redo, timeline, Project panel
+  bench --playback-profile [--play N] [--gpu] [--json] [--out FILE]
+                                           decode/composite/upload/e2e fps for ProRes HQ 6880×1032,
+                                           H.264 1920×1080 and a 4-layer 25 fps comp (ffmpeg fixtures)
   script FILE.jsx [F.ecproj] | --eval CODE run JavaScript with the After Effects-style object model
                                            (app.project, comps, layers, properties…); prints writeLn
                                            output and the result; errors exit 1 with file:line:col
   mcp [--bridge PORT]                      MCP server (JSON-RPC over stdio)
 options: --project F.ecproj | --demo | --empty   --save | --save-as F   --bridge PORT   --json   --gpu
+         --pix-fmt yuv420p|rgb24|rgba   --sidecar FILE   --audio-out FILE   --audio-only   --no-window
 <comp>: id or name, '-' = active comp; <layer>: id, '#n' or name; <value>: JSON or bare string";
 
 /// Options that take a value.
@@ -157,6 +173,11 @@ const VALUED: &[&str] = &[
     "--webm-codec",
     "--audio-bitrate",
     "--opus-app",
+    "--pix-fmt",
+    "--sidecar",
+    "--audio-out",
+    "--idle-exit",
+    "--control",
 ];
 
 /// Options without a value. Any other `--option` is a usage error.
@@ -175,16 +196,19 @@ const FLAGS: &[&str] = &[
     "--queue",
     "--ops",
     "--dooh",
+    "--playback-profile",
     "--serial",
     "--small",
     "--adv3d",
+    "--audio-only",
+    "--no-window",
 ];
 
-struct Args {
+pub(crate) struct Args {
     pos: Vec<String>,
     opts: Vec<(String, Option<String>)>,
     /// `--project F` or a positional `*.ecproj`.
-    project: Option<String>,
+    pub(crate) project: Option<String>,
 }
 
 impl Args {
@@ -224,19 +248,19 @@ impl Args {
         };
         Ok(a)
     }
-    fn flag(&self, k: &str) -> bool {
+    pub(crate) fn flag(&self, k: &str) -> bool {
         self.opts.iter().any(|(o, _)| o == k)
     }
-    fn opt(&self, k: &str) -> Option<&str> {
+    pub(crate) fn opt(&self, k: &str) -> Option<&str> {
         self.opts.iter().rev().find(|(o, _)| o == k).and_then(|(_, v)| v.as_deref())
     }
-    fn num(&self, k: &str) -> Result<Option<f64>, String> {
+    pub(crate) fn num(&self, k: &str) -> Result<Option<f64>, String> {
         self.opt(k).map(|v| v.parse::<f64>().map_err(|_| format!("{k}: not a number: {v}"))).transpose()
     }
 }
 
 /// A comp/layer reference: number → id, `-` → none (active), else a name / `#n`.
-fn reference(s: &str) -> Option<Value> {
+pub(crate) fn reference(s: &str) -> Option<Value> {
     match s {
         "-" | "" => None,
         _ => Some(s.parse::<u64>().map(Value::from).unwrap_or_else(|_| json!(s))),
@@ -263,6 +287,7 @@ fn main() {
         Err(e) => fail_usage(&e),
     };
     let json_out = args.flag("--json");
+    let _ = args.flag("--no-window"); // EncodeCraft may pass this; spawn with CREATE_NO_WINDOW on Windows.
     if args.pos.is_empty() {
         fail_usage("missing subcommand");
     }
@@ -286,7 +311,7 @@ fn fail_usage(e: &str) -> ! {
     std::process::exit(2)
 }
 
-enum Failure {
+pub(crate) enum Failure {
     Usage(String),
     Error(String),
 }
@@ -322,13 +347,19 @@ fn backend(args: &Args, default_demo: bool) -> Result<Backend, Failure> {
     Ok(b)
 }
 
-/// A wired session; `--gpu` attaches the GPU compositor (renders then follow the project's
-/// renderer setting, Mercury GPU Acceleration by default).
+/// A wired session with no GPU (the CPU compositor). `--gpu` is attached by [`session`] or the
+/// streaming/serve paths, which fall back to the CPU when there is no adapter.
+pub(crate) fn session_cpu() -> Result<effectcraft_engine::Session, Failure> {
+    Ok(effectcraft_host::session())
+}
+
+/// A wired session; `--gpu` attaches the GPU compositor when an adapter exists, otherwise the
+/// CPU (a `gpu` event on stderr). Renders then follow the project's renderer setting.
 fn session(args: &Args) -> Result<effectcraft_engine::Session, Failure> {
-    let mut s = effectcraft_host::session();
+    let mut s = session_cpu()?;
     if args.flag("--gpu") {
-        let g = effectcraft_gpu::Gpu::headless().ok_or_else(|| Failure::Error("--gpu: no usable GPU adapter".into()))?;
-        s.accel = Some(std::sync::Arc::new(g));
+        let mut events = |v| progress::emit(&v);
+        let _ = gpu_slot::GpuSlot::attach(&mut s, true, &mut events);
     }
     Ok(s)
 }
@@ -396,7 +427,7 @@ fn script_cmd(args: &Args, json_out: bool) -> Result<(), Failure> {
 }
 
 /// Print a result: compact JSON with `--json`, else pretty JSON.
-fn emit(v: &Value, json_out: bool) {
+pub(crate) fn emit(v: &Value, json_out: bool) {
     if json_out {
         say!("{v}");
     } else {
@@ -404,9 +435,15 @@ fn emit(v: &Value, json_out: bool) {
     }
 }
 
+mod gpu_slot;
+mod progress;
+mod serve;
+mod stream;
+
 fn run(cmd: &str, args: &Args, json_out: bool) -> Result<(), Failure> {
     match cmd {
         "render" => render(args, json_out)?,
+        "serve" => serve::run(args)?,
         "bench" => bench_cmd(args)?,
         "info" => {
             let mut b = backend(args, true)?;
@@ -591,13 +628,17 @@ fn with_saved(v: Value, saved: Option<String>) -> Value {
 }
 
 /// `render`: queue `--comp` (or the active comp) with the given settings unless `--queue`, then
-/// render the queue with a progress line on stderr. Fails if any item fails.
+/// render the queue with JSON `frame` events on stderr. Streaming formats (`yuv420p` / `rgb24` /
+/// `rgba` / `--audio-only`) skip the encoded movie. Fails if any item fails.
 fn render(args: &Args, json_out: bool) -> Result<(), Failure> {
     use effectcraft_engine::project::render_queue::RenderStatus;
     if args.opt("--bridge").is_some() {
         return usage_err("render runs headless; use `exec renderQueue.add` / `renderQueue.render` with --bridge");
     }
-    let mut s = session(args)?;
+    if stream::is_stream_request(args) {
+        return stream::cli_render(args, json_out);
+    }
+    let mut s = session_cpu()?;
     match &args.project {
         Some(p) => s.execute("file.open", json!({"path": p})).map_err(|e| Failure::Error(e.to_string()))?,
         None => s.execute("file.openDemoProject", json!({})).map_err(|e| Failure::Error(e.to_string()))?,
@@ -669,30 +710,47 @@ fn render(args: &Args, json_out: bool) -> Result<(), Failure> {
             r["frames"],
             r["outputModuleSummary"].as_str().unwrap_or("")
         );
+        let mut events = |v| progress::emit(&v);
+        let slot = gpu_slot::GpuSlot::attach(&mut s, args.flag("--gpu"), &mut events);
+        if let (Some(w), Some(h)) = (r["width"].as_u64(), r["height"].as_u64()) {
+            slot.fit(&mut s, w as u32, h as u32, &mut events);
+        }
+        progress::emit(&json!({
+            "event": "header",
+            "version": 1,
+            "width": r["width"],
+            "height": r["height"],
+            "fps": r["frameRate"],
+            "frames": r["frames"],
+            "pixFmt": "encoded",
+            "format": args.opt("--format"),
+            "audio": r.get("audio"),
+            "gpu": slot.used(&s),
+            "comp": r["compName"],
+            "out": r["outputPath"],
+        }));
+    } else if args.flag("--gpu") {
+        let mut events = |v| progress::emit(&v);
+        let _ = gpu_slot::GpuSlot::attach(&mut s, true, &mut events);
     }
     s.execute("renderQueue.render", json!({"wait": false})).map_err(err)?;
-    let tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
+    let mut last_done = 0u64;
     while s.is_rendering() {
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        if tty && let Some(p) = s.render_progress() {
-            let left = p.remaining.map(|r| format!(", ~{r:.1}s left")).unwrap_or_default();
-            let _ = write!(
-                std::io::stderr(),
-                "
-  [{}/{}] frame {}/{}  {:.1}s{left}\x1b[K",
-                (p.items_done + 1).min(p.items_total),
-                p.items_total,
-                p.done,
-                p.total,
-                p.item_elapsed
-            );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        if let Some(p) = s.render_progress()
+            && p.done > last_done
+        {
+            last_done = p.done;
+            progress::emit(&json!({
+                "event": "frame",
+                "n": p.done,
+                "total": p.total,
+                "elapsed": (p.item_elapsed * 1000.0).round() / 1000.0,
+            }));
         }
         s.poll_render();
     }
     s.poll_render();
-    if tty {
-        note!();
-    }
     let mut results = vec![];
     let mut failed = vec![];
     for it in s.project.render_queue.iter().filter(|i| i.render && i.started.is_some()) {
@@ -744,6 +802,9 @@ fn bench_cmd(args: &Args) -> Result<(), Failure> {
     }
     if args.flag("--dooh") {
         return bench_dooh(args);
+    }
+    if args.flag("--playback-profile") {
+        return playback_profile::run(args);
     }
     let mut s = effectcraft_host::session();
     match &args.project {

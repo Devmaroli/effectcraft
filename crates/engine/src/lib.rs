@@ -30,6 +30,7 @@ pub mod menus;
 pub mod models;
 pub mod offload;
 pub mod perf;
+pub mod playback_caps;
 pub mod prefs;
 pub mod preview;
 pub mod psd_import;
@@ -426,6 +427,8 @@ pub struct Session {
     /// event loop (the desktop app) turn this on; headless sessions run `footage.check` when
     /// they want it.
     pub check_footage_on_open: bool,
+    /// Startup (and device-lost) playback capability probe. Agents read this as JSON.
+    pub playback_caps: playback_caps::PlaybackCaps,
 }
 
 /// A thumbnail render ([`Session::thumbnail_job`]): (width, height, RGBA8).
@@ -508,6 +511,7 @@ impl Default for Session {
             next_task_id: 1,
             learn: None,
             check_footage_on_open: false,
+            playback_caps: playback_caps::PlaybackCaps::probe_host(),
         }
     }
 }
@@ -1050,20 +1054,34 @@ pub struct FontRow {
     /// Settings ▸ Type ▸ Show Font Names in English is off.
     pub display: String,
     pub recent: bool,
+    /// The face has Arabic init/medi/fina (a real Arabic text face, not Inter's cmap).
+    pub arabic: bool,
 }
 
 /// Outline polylines of "Sample" set in `family` at `size` px (baseline at y = 0, y down), for
 /// the font menu's preview (Settings ▸ Type ▸ Show Font Preview).
-pub fn font_preview(family: &str, size: f64) -> Vec<Vec<[f32; 2]>> {
+pub fn font_preview_text(family: &str, size: f64, sample: &str) -> Vec<Vec<[f32; 2]>> {
     use kurbo::PathEl;
-    let st = effectcraft_keyframe::text_doc::CharStyle { font: family.to_string(), size, ..Default::default() };
+    let rtl = effectcraft_text::arabic::first_strong_rtl(sample) == Some(true);
+    let doc = effectcraft_keyframe::TextDoc {
+        text: sample.into(),
+        font: family.to_string(),
+        size,
+        direction: if rtl { effectcraft_keyframe::Direction::Rtl } else { effectcraft_keyframe::Direction::Ltr },
+        justify: if rtl { effectcraft_keyframe::Justify::Right } else { effectcraft_keyframe::Justify::Left },
+        ..Default::default()
+    };
+    let lay = effectcraft_text::layout_doc(&doc);
+    let origin_x = lay.glyphs.iter().map(|g| g.origin.x).fold(f64::INFINITY, f64::min);
+    let dx = if origin_x.is_finite() { origin_x } else { 0.0 };
     let mut out = vec![];
-    let mut x = 0.0;
-    for ch in "Sample".chars() {
-        let (path, adv) = effectcraft_text::char_glyph_style(&st, ch);
+    for g in &lay.glyphs {
+        if g.is_space {
+            continue;
+        }
         let mut cur: Vec<[f32; 2]> = vec![];
-        let pt = |p: kurbo::Point| [(p.x + x) as f32, p.y as f32];
-        kurbo::flatten(&path, 0.2, |el| match el {
+        let pt = |p: kurbo::Point| [(p.x + g.origin.x - dx) as f32, (p.y + g.origin.y) as f32];
+        kurbo::flatten(&g.path, 0.2, |el| match el {
             PathEl::MoveTo(p) => {
                 if cur.len() > 1 {
                     out.push(std::mem::take(&mut cur));
@@ -1084,9 +1102,12 @@ pub fn font_preview(family: &str, size: f64) -> Vec<Vec<[f32; 2]>> {
         if cur.len() > 1 {
             out.push(cur);
         }
-        x += adv;
     }
     out
+}
+
+pub fn font_preview(family: &str, size: f64) -> Vec<Vec<[f32; 2]>> {
+    font_preview_text(family, size, "Sample")
 }
 
 /// The Character panel's font menu: the recent fonts (Settings ▸ Type ▸ Number of Recent Fonts
@@ -1094,10 +1115,18 @@ pub fn font_preview(family: &str, size: f64) -> Vec<Vec<[f32; 2]>> {
 pub fn font_menu(prefs: &prefs::Prefs) -> Vec<FontRow> {
     let all = text_families();
     let native = if prefs.type_.font_names_in_english { Default::default() } else { effectcraft_text::fonts::native_families() };
-    let row = |f: &String, recent: bool| FontRow { family: f.clone(), display: native.get(f).cloned().unwrap_or_else(|| f.clone()), recent };
+    let row = |f: &String, recent: bool| {
+        let face = effectcraft_text::resolve(f, "Regular").face;
+        FontRow {
+            family: f.clone(),
+            display: native.get(f).cloned().unwrap_or_else(|| f.clone()),
+            recent,
+            arabic: effectcraft_text::arabic::is_arabic_capable(face),
+        }
+    };
     let mut out: Vec<FontRow> = prefs.recent_fonts_shown().iter().filter(|f| all.contains(f)).map(|f| row(f, true)).collect();
     if !out.is_empty() {
-        out.push(FontRow { family: String::new(), display: "-".into(), recent: false });
+        out.push(FontRow { family: String::new(), display: "-".into(), recent: false, arabic: false });
     }
     out.extend(all.iter().map(|f| row(f, false)));
     out

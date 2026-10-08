@@ -19,7 +19,9 @@ effectcraft-automation = { workspace = true }
 effectcraft-ui-egui = { workspace = true }
 effectcraft-render = { workspace = true }
 effectcraft-gpu = { workspace = true }
+effectcraft-media = { workspace = true }
 effectcraft-time = { workspace = true }
+effectcraft-export = { workspace = true }
 serde_json = { workspace = true }
 image = { workspace = true }
 cpu-time = "1"

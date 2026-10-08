@@ -491,3 +491,45 @@ fn wav_and_aiff_audio_only() {
         }
     }
 }
+
+/// Raw yuv420p / rgb24 / rgba streams: byte size matches the header, progress starts at frame 1.
+#[test]
+fn raw_stream_sizes_and_progress() {
+    let (p, cid) = project(None);
+    let s = settings();
+    let om = OutputModule { audio: AudioOutput::Off, ..OutputModule::for_format(OutputFormat::PngSequence) };
+    let dummy = "stream".to_string();
+    let job = Job {
+        project: &p,
+        footage: &NoFootage,
+        expr: None,
+        accel: None,
+        comp: cid,
+        settings: &s,
+        output: &om,
+        path: &dummy,
+        sink: None,
+        options: Default::default(),
+        nested_switches: true,
+    };
+    for fmt in [effectcraft_export::PixFmt::Yuv420p, effectcraft_export::PixFmt::Rgb24, effectcraft_export::PixFmt::Rgba] {
+        let info = effectcraft_export::stream_info(&job, fmt).expect("info");
+        assert_eq!((info.width, info.height, info.frames), (W, H, FRAMES), "{fmt:?}");
+        let mut buf = Vec::new();
+        let mut seen = Vec::new();
+        let r = effectcraft_export::export_raw(&job, fmt, &mut buf, &mut |pr| {
+            seen.push(pr.done);
+            true
+        })
+        .expect("raw");
+        assert_eq!(r.frames, FRAMES);
+        assert_eq!(buf.len() as u64, info.bytes_per_frame * FRAMES, "{fmt:?}");
+        assert_eq!(r.bytes, buf.len() as u64);
+        assert!(seen.contains(&1), "progress includes frame 1: {seen:?}");
+        assert_eq!(seen.last().copied(), Some(FRAMES));
+    }
+    let mut wav = Vec::new();
+    let wr = effectcraft_export::export_wav(&job, &mut wav, &mut |_| true).expect("wav");
+    assert!(wr.audio);
+    assert_eq!(&wav[..4], b"RIFF");
+}

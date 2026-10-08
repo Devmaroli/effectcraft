@@ -114,7 +114,9 @@ fn cmd_dragging_the_current_time_scrubs_and_an_idle_scrub_closes() {
 #[test]
 fn preview_with_audio_shows_every_frame_and_sounds_once_cached() {
     let fake = Fake::default();
-    let (app, cid) = setup(true, &fake);
+    let (mut app, cid) = setup(true, &fake);
+    // Hold-audio (not framedrop) is the path this test covers; Auto playback drops frames by default.
+    app.session.prefs.previews.drop_frames = false;
     // A little under one frame of input time per step.
     let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).with_step_dt(1.0 / 31.0).build_eframe(|_| app);
     h.run_steps(2);

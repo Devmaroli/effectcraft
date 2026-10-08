@@ -577,6 +577,40 @@ pub(crate) fn bottom_bar(app: &mut EffectcraftApp, ui: &mut egui::Ui, bar: Rect,
     }
     x = r.max.x + 6.0;
 
+    let r = Rect::from_min_size(pos2(x, cy - 10.0), vec2(40.0, 20.0));
+    let auto_on = app.session.prefs.previews.adaptive_playback;
+    let auto_tip =
+        "Auto resolution while playing: drop to Half then Quarter if playback falls behind. Off: stay at the chosen resolution and drop frames instead.";
+    let auto_resp = ui.interact(r, egui::Id::new("vw-auto-res"), Sense::click()).on_hover_text(auto_tip);
+    if auto_on {
+        p.rect_filled(r, 3.0, t.accent.gamma_multiply(0.35));
+    }
+    p.text(r.center(), Align2::CENTER_CENTER, "Auto", Tokens::ui(11.0), if auto_on { t.hot_text } else { t.text_dim });
+    app.auto.add("viewer.autoResToggle", r, "Auto resolution while playing");
+    if auto_resp.clicked() {
+        let ctx = ui.ctx().clone();
+        if let Err(e) = crate::menus::invoke(app, &ctx, "view.adaptivePlayback", json!({})) {
+            app.ui.status = e;
+        }
+    }
+    x = r.max.x + 6.0;
+
+    let r = Rect::from_min_size(pos2(x, cy - 10.0), vec2(36.0, 20.0));
+    let on = app.session.prefs.previews.show_performance;
+    let resp = ui.interact(r, egui::Id::new("vw-perf"), Sense::click()).on_hover_text("Performance readout");
+    if on {
+        p.rect_filled(r, 3.0, t.accent.gamma_multiply(0.35));
+    }
+    p.text(r.center(), Align2::CENTER_CENTER, "Perf", Tokens::ui(11.0), if on { t.hot_text } else { t.text_dim });
+    app.auto.add("viewer.performanceToggle", r, "Performance readout");
+    if resp.clicked() {
+        let ctx = ui.ctx().clone();
+        if let Err(e) = crate::menus::invoke(app, &ctx, "view.performance", json!({})) {
+            app.ui.status = e;
+        }
+    }
+    x = r.max.x + 6.0;
+
     let tog = |ui: &mut egui::Ui, auto: &mut crate::automation::Registry, x: &mut f32, icon: Icon, on: bool, id: &str, tip: &str| -> (bool, Rect) {
         let r = Rect::from_min_size(pos2(*x, cy - 11.0), vec2(22.0, 22.0));
         let resp = widgets::icon_button(ui, r, icon, on, &t, egui::Id::new(("vw-btn", id))).on_hover_text(tip);

@@ -30,7 +30,8 @@ impl Session {
         self.footage.set_conform_folder(self.conformed_audio_folder());
         // Switches Affect Nested Comps changes what precomp layers render: drop cached pixels.
         let nested = self.prefs.general.switches_affect_nested_comps;
-        if self.applied_nested_switches.replace(nested).is_some_and(|was| was != nested) {
+        let previous = self.applied_nested_switches.replace(nested).unwrap_or(true);
+        if previous != nested {
             self.layer_cache.clear();
             self.events.push(crate::Event::PurgeCaches);
         }
@@ -67,6 +68,16 @@ impl Session {
     /// `MediaPool::set_conform_folder`).
     pub fn conformed_audio_folder(&self) -> Option<std::path::PathBuf> {
         self.cache_folder(&self.prefs.disk.conformed_media_folder, "Conformed Audio")
+    }
+
+    /// Settings ▸ Disk ▸ Proxy Cache Folder (automatic JPEG half-res proxies).
+    pub fn proxy_cache_folder(&self) -> Option<std::path::PathBuf> {
+        self.cache_folder(&self.prefs.disk.proxy_cache_folder, "Proxy Cache")
+    }
+
+    /// Settings ▸ Disk ▸ Maximum Proxy Cache Size.
+    pub fn proxy_cache_max_bytes(&self) -> u64 {
+        (self.prefs.disk.proxy_cache_max_gb.max(1) as u64) << 30
     }
 
     /// Apply the Memory & CPU cache budgets, limited by RAM Reserved for Other Applications and

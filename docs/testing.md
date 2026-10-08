@@ -42,6 +42,7 @@ intermediate image.
 ```sh
 cargo run --release -p effectcraft-cli -- bench --n 10 --play 30
 cargo run --release -p effectcraft-cli -- bench --dooh --play 25 --gpu
+cargo run --release -p effectcraft-cli -- bench --playback-profile --play 8 --gpu --json --out /tmp/playback-profile.json
 ```
 
 `bench` prints per-layer and per-effect timings for one frame, and playback timings with and
@@ -50,5 +51,8 @@ without the layer cache. `bench --dooh` builds 25 fps digital-out-of-home compos
 Levels / Glow and blend modes, then reports achieved fps against 25 fps at Full, Half and
 Quarter resolution. `--serial` is the old one-layer-at-a-time walk; `--gpu` tries the wgpu
 compositor (skips with a note when this machine has no adapter). `--json` writes a machine-
-readable report. First numbers (Linux cloud VM, 4 cores, no GPU) are in [gaps.md](gaps.md) G5:
+readable report. `bench --playback-profile` generates short ProRes HQ 6880×1032 and H.264
+1080p clips with ffmpeg (external oracle only) and reports decode, composite, viewer-upload
+stand-in and end-to-end frame times, plus a 4-layer 25 fps comp; `--out` writes JSON.
+First numbers (Linux cloud VM, 4 cores, no GPU) are in [gaps.md](gaps.md) G5:
 Full 1080p and 6080×720 were not real-time; Half was real-time on all four sizes.
