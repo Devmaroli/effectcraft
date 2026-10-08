@@ -235,3 +235,30 @@ fn type_tool_drag_makes_paragraph_text_with_box_handles() {
     assert!(doc2.box_size.unwrap()[0] > bs[0] + 20.0, "{:?}", doc2.box_size);
     assert!(h.state().session.state.text_edit.is_some(), "still editing after resizing");
 }
+
+#[test]
+fn paragraph_direction_is_always_visible_and_ime_commits_arabic() {
+    let mut s = Session::default();
+    s.execute("comp.new", json!({"name": "Type", "width": 640, "height": 360, "duration": 2})).unwrap();
+    let lid = s.execute("layer.newText", json!({"text": "Hello", "size": 72, "position": [200, 180], "justify": "left"})).unwrap()["layer"].as_u64().unwrap();
+    s.execute("text.edit", json!({"layer": lid, "caret": 5})).unwrap();
+    let mut h = Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).build_eframe(move |_| EffectcraftApp::new(s));
+    h.state_mut().show_panel(PanelKind::Composition);
+    h.state_mut().show_panel(PanelKind::Paragraph);
+    h.state_mut().show_panel(PanelKind::Character);
+    h.run_steps(4);
+    for id in [
+        "paragraph.direction",
+        "paragraph.direction.ltr",
+        "paragraph.direction.rtl",
+        "paragraph.direction.auto",
+        "character.arabicFallback",
+        "character.digits",
+        "character.keepArabicJoined",
+    ] {
+        assert!(h.state().auto.find(id).is_some(), "missing {id}");
+    }
+    h.input_mut().events.push(Event::Ime(egui::ImeEvent::Commit("خصم".into())));
+    h.run_steps(3);
+    assert!(edited(&h).1.contains("خصم"), "IME commit inserted Arabic: {}", edited(&h).1);
+}

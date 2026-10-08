@@ -14,6 +14,30 @@ pub(crate) fn label<'a>(app: &EffectcraftApp, command: &str, source: &'a str) ->
     if japanese(app) { JAPANESE.iter().find(|(id, en, _)| *id == command && *en == source).map(|(_, _, ja)| *ja).unwrap_or(source) } else { source }
 }
 
+/// Character / Paragraph panel strings (English default; Japanese when the UI language is ja).
+pub(crate) fn panel<'a>(app: &EffectcraftApp, en: &'a str) -> &'a str {
+    if japanese(app) { PANEL_JA.iter().find(|(e, _)| *e == en).map(|(_, ja)| *ja).unwrap_or(en) } else { en }
+}
+
+const PANEL_JA: &[(&str, &str)] = &[
+    ("Ligatures", "合字"),
+    ("Arabic fallback", "アラビア語フォールバック"),
+    ("Digits", "数字"),
+    ("Western (50)", "西欧数字 (50)"),
+    ("Arabic-Indic (٥٠)", "アラビア数字 (٥٠)"),
+    ("Keep Arabic letters joined", "アラビア文字の接続を維持"),
+    ("LTR", "LTR"),
+    ("RTL", "RTL"),
+    ("Auto", "自動"),
+    ("Roman Hanging Punctuation", "欧文ぶら下げ"),
+    ("Stretch with kashida (ـ)", "カシダで揃える (ـ)"),
+    ("All", "すべて"),
+    ("Arabic", "アラビア語"),
+    ("No Arabic · uses fallback", "アラビア語なし · フォールバック"),
+    ("Search fonts", "フォントを検索"),
+    ("Characters (keep joins)", "文字（接続を維持）"),
+];
+
 pub(crate) fn entry(app: &EffectcraftApp, e: &MenuEntry, shown: String) -> String {
     if !japanese(app) {
         return shown;

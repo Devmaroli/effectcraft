@@ -163,7 +163,14 @@ fn text_range_p(p: &Value) -> Option<std::ops::Range<usize>> {
 fn new_text(s: &mut Session, p: &Value) -> Result<Value> {
     let cid = comp_id(s, p)?;
     let comp = s.project.comp(cid).ok_or(EngineError::NoComp)?.clone();
-    let mut doc = TextDoc { text: "Text".into(), justify: Justify::Center, ..Default::default() };
+    let mut doc = TextDoc {
+        text: "Text".into(),
+        justify: Justify::Center,
+        direction: effectcraft_keyframe::Direction::Auto,
+        arabic_fallback: effectcraft_text::arabic::default_arabic_fallback(),
+        keep_arabic_joined: true,
+        ..Default::default()
+    };
     // A paragraph box given in comp space: the layer sits at its centre.
     let bx = p.get("box").and_then(Value::as_array).map(|a| [0, 1, 2, 3].map(|i| a.get(i).and_then(Value::as_f64).unwrap_or(0.0)));
     let mut q = p.clone();
@@ -180,8 +187,12 @@ fn new_text(s: &mut Session, p: &Value) -> Result<Value> {
         doc.box_pos = [-w / 2.0, -h / 2.0];
         pos = Some([x + w / 2.0, y + h / 2.0]);
         if p.get("justify").is_none() {
-            doc.set_attr("justify", &json!("left"), None).map_err(|e| bad("layer.newText", e))?;
+            let j = if effectcraft_text::arabic::first_strong_rtl(&doc.text) == Some(true) { "right" } else { "left" };
+            doc.set_attr("justify", &json!(j), None).map_err(|e| bad("layer.newText", e))?;
         }
+    }
+    if p.get("justify").is_none() && effectcraft_text::arabic::first_strong_rtl(&doc.text) == Some(true) {
+        doc.justify = Justify::Right;
     }
     let edit = b_p(p, "edit").unwrap_or(false);
     let id = s.edit("New Text Layer", None, |proj, st| {

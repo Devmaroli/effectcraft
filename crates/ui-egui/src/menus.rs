@@ -1489,7 +1489,11 @@ pub fn menu_bar(app: &mut EffectcraftApp, ui: &mut egui::Ui) {
                 if let MenuNode::Submenu { label, children } = node {
                     let r = ui.menu_button(crate::i18n::label(app, "", label), |ui| {
                         ui.set_min_width(if label == "Effect" { 200.0 } else { 280.0 });
-                        menu_nodes(app, ui, children, &mut clicked);
+                        // Top-level menus (Window especially) must fit a 1080p screen.
+                        let max_h = (ui.ctx().content_rect().height() - 48.0).max(120.0);
+                        egui::ScrollArea::vertical().max_height(max_h).auto_shrink([false, true]).show(ui, |ui| {
+                            menu_nodes(app, ui, children, &mut clicked);
+                        });
                     });
                     app.auto.add(&format!("menu.{label}"), r.response.rect, label);
                 }
@@ -1573,13 +1577,20 @@ fn gutter(checked: bool) -> egui::Atom<'static> {
     (if checked { "✔" } else { "" }).atom_size(egui::vec2(14.0, 14.0))
 }
 
-fn menu_entry(app: &EffectcraftApp, ui: &mut egui::Ui, e: &MenuEntry) -> bool {
+fn menu_entry(app: &mut EffectcraftApp, ui: &mut egui::Ui, e: &MenuEntry) -> bool {
     let label = entry_label(app, e);
-    let mut b = egui::Button::new((gutter(entry_checked(app, e) == Some(true)), label));
+    let mut b = egui::Button::new((gutter(entry_checked(app, e) == Some(true)), label.as_str()));
     if let Some(s) = entry_shortcut(app, e) {
         b = b.shortcut_text(shortcut_text(&s));
     }
-    ui.add_enabled(entry_enabled(app, e), b).clicked()
+    let r = ui.add_enabled(entry_enabled(app, e), b);
+    app.auto.add(&format!("menu.entry.{}", e.label), r.rect, &e.label);
+    if e.command == "window.panel"
+        && let Some(panel) = e.params.get("panel").and_then(Value::as_str)
+    {
+        app.auto.add(&format!("menu.window.{panel}"), r.rect, &e.label);
+    }
+    r.clicked()
 }
 
 #[cfg(test)]

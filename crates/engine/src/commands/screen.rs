@@ -1099,42 +1099,10 @@ pub fn specs() -> Vec<CommandSpec> {
         query!("screen.suite.state", "Screen Suite state", "{}", suite_state),
         query!("screen.suite.alerts", "In-app Screen Suite alerts (banner + highlighted rows)", "{}", suite_alerts),
         cmd!("screen.suite.undo", "Undo Screen Suite booking update", [], None, "{}", always, suite_undo),
-        cmd!(
-            "screen.suite.keepOrphans",
-            "Keep comps built for a screen that left the booking",
-            [],
-            None,
-            "{name?}",
-            always,
-            orphans_keep
-        ),
-        cmd!(
-            "screen.suite.removeOrphans",
-            "Remove comps built for a screen that left the booking",
-            [],
-            None,
-            "{name?}",
-            always,
-            orphans_remove
-        ),
-        cmd!(
-            "screen.suite.naming",
-            "Screen Manager prefix, suffix and name-from",
-            [],
-            None,
-            "{prefix?, suffix?, nameFrom?, jobName?}",
-            always,
-            naming_set
-        ),
-        cmd!(
-            "screen.matcher.send",
-            "Send checked comps to EncodeCraft",
-            [],
-            None,
-            "{anyway?: bool, presets?: {comp: presetId}}",
-            always,
-            matcher_send
-        ),
+        cmd!("screen.suite.keepOrphans", "Keep comps built for a screen that left the booking", [], None, "{name?}", always, orphans_keep),
+        cmd!("screen.suite.removeOrphans", "Remove comps built for a screen that left the booking", [], None, "{name?}", always, orphans_remove),
+        cmd!("screen.suite.naming", "Screen Manager prefix, suffix and name-from", [], None, "{prefix?, suffix?, nameFrom?, jobName?}", always, naming_set),
+        cmd!("screen.matcher.send", "Send checked comps to EncodeCraft", [], None, "{anyway?: bool, presets?: {comp: presetId}}", always, matcher_send),
         query!("screen.matcher.plan", "EncodeCraft preset plan for this booking", "{}", send_plan),
         cmd!("screen.library.open", "Edit Screen Library", [], None, "{}", always, library_open),
         cmd!(
@@ -1157,24 +1125,8 @@ pub fn specs() -> Vec<CommandSpec> {
             always,
             library_import_preview
         ),
-        cmd!(
-            "screen.library.import",
-            "Import a Screen Library JSON file",
-            [],
-            None,
-            "{json?, path?, mode?: merge|replace}",
-            always,
-            library_import
-        ),
-        cmd!(
-            "screen.library.importApply",
-            "Apply a previewed Screen Library import",
-            [],
-            None,
-            "{mode?: merge|replace}",
-            always,
-            library_import_apply
-        ),
+        cmd!("screen.library.import", "Import a Screen Library JSON file", [], None, "{json?, path?, mode?: merge|replace}", always, library_import),
+        cmd!("screen.library.importApply", "Apply a previewed Screen Library import", [], None, "{mode?: merge|replace}", always, library_import_apply),
         cmd!("screen.library.save", "Save Screen Library (updates every tool live)", [], None, "{path?}", always, library_save),
         cmd!("screen.adapter.parse", "Parse Adapter Tag", [], None, "{text?}", always, adapter_parse),
         cmd!("screen.adapter.apply", "Apply Adapter Tag", [], None, "{text?}", always, adapter_apply),

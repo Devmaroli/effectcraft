@@ -121,9 +121,36 @@ impl BaselineOption {
 /// Paragraph direction.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Direction {
+    /// Saved default for documents that predate Auto. New text layers set [`Direction::Auto`].
     #[default]
     Ltr,
     Rtl,
+    /// First strong character (UAX #9). New text layers use this.
+    Auto,
+}
+
+/// Western (0-9) or Arabic-Indic (٠-٩) digits. Missing in old documents = Western.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DigitStyle {
+    #[default]
+    Western,
+    ArabicIndic,
+}
+
+impl DigitStyle {
+    pub fn key(self) -> &'static str {
+        match self {
+            DigitStyle::Western => "western",
+            DigitStyle::ArabicIndic => "arabicIndic",
+        }
+    }
+    pub fn parse(s: &str) -> Option<DigitStyle> {
+        Some(match s.to_ascii_lowercase().replace(['_', ' ', '-'], "").as_str() {
+            "western" | "european" | "latn" | "0" => DigitStyle::Western,
+            "arabicindic" | "arabic" | "hindi" | "national" | "1" => DigitStyle::ArabicIndic,
+            _ => return None,
+        })
+    }
 }
 
 /// Line-breaking composer.
@@ -141,6 +168,9 @@ fn single_line() -> Composer {
 }
 fn yes() -> bool {
     true
+}
+fn digit_is_western(d: &DigitStyle) -> bool {
+    *d == DigitStyle::Western
 }
 
 /// Figure style (OpenType `lnum` / `onum`).
@@ -303,6 +333,16 @@ pub struct CharStyle {
     /// the Character panel's Variable Font Axes.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub variations: Vec<(String, f32)>,
+    /// Family used for Arabic letters when the main font is Latin-first or lacks good GSUB.
+    /// Empty (old documents) = do not reroute; the chosen face keeps any Arabic cmap it has.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub arabic_fallback: String,
+    /// Missing in old documents = Western (no remapping).
+    #[serde(default, skip_serializing_if = "digit_is_western")]
+    pub digit_style: DigitStyle,
+    /// When true, tracking inserts kashida instead of opening Arabic joins. Old documents omit it (off).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keep_arabic_joined: bool,
 }
 
 impl Default for CharStyle {
@@ -340,6 +380,9 @@ pub struct ParaStyle {
     pub composer: Composer,
     /// Roman hanging punctuation: punctuation at the edges of paragraph text hangs outside the box.
     pub hanging_punctuation: bool,
+    /// Justify by inserting tatweel (ـ) in Arabic joins. Old documents omit it (off).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub kashida_justify: bool,
 }
 
 impl Default for ParaStyle {
@@ -390,6 +433,12 @@ pub struct TextDoc {
     /// Base variable font axis values (see [`CharStyle::variations`]).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub variations: Vec<(String, f32)>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub arabic_fallback: String,
+    #[serde(default, skip_serializing_if = "digit_is_western")]
+    pub digit_style: DigitStyle,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keep_arabic_joined: bool,
     pub indent_left: f64,
     pub indent_right: f64,
     pub indent_first: f64,
@@ -400,6 +449,8 @@ pub struct TextDoc {
     #[serde(default = "single_line")]
     pub composer: Composer,
     pub hanging_punctuation: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub kashida_justify: bool,
     /// Vertical type (columns right to left, characters upright).
     pub vertical: bool,
     /// Character style runs covering the text (empty = the whole text uses the base style).
@@ -443,6 +494,9 @@ impl Default for TextDoc {
             vertical_roman_upright: false,
             opentype: OpenType::default(),
             variations: vec![],
+            arabic_fallback: String::new(),
+            digit_style: DigitStyle::Western,
+            keep_arabic_joined: false,
             indent_left: 0.0,
             indent_right: 0.0,
             indent_first: 0.0,
@@ -451,6 +505,7 @@ impl Default for TextDoc {
             direction: Direction::Ltr,
             composer: Composer::EveryLine,
             hanging_punctuation: false,
+            kashida_justify: false,
             vertical: false,
             runs: Vec::new(),
             paragraphs: Vec::new(),
@@ -531,6 +586,9 @@ impl TextDoc {
             vertical_roman_upright: self.vertical_roman_upright,
             opentype: self.opentype,
             variations: self.variations.clone(),
+            arabic_fallback: self.arabic_fallback.clone(),
+            digit_style: self.digit_style,
+            keep_arabic_joined: self.keep_arabic_joined,
         }
     }
 
@@ -560,6 +618,9 @@ impl TextDoc {
         self.vertical_roman_upright = s.vertical_roman_upright;
         self.opentype = s.opentype;
         self.variations = s.variations.clone();
+        self.arabic_fallback = s.arabic_fallback.clone();
+        self.digit_style = s.digit_style;
+        self.keep_arabic_joined = s.keep_arabic_joined;
     }
 
     /// The base (first paragraph's) settings.
@@ -574,6 +635,7 @@ impl TextDoc {
             direction: self.direction,
             composer: self.composer,
             hanging_punctuation: self.hanging_punctuation,
+            kashida_justify: self.kashida_justify,
         }
     }
 
@@ -587,6 +649,7 @@ impl TextDoc {
         self.direction = p.direction;
         self.composer = p.composer;
         self.hanging_punctuation = p.hanging_punctuation;
+        self.kashida_justify = p.kashida_justify;
     }
 
     /// Whether every character shares one style.
@@ -962,11 +1025,14 @@ pub const CHAR_ATTRS: &[&str] = &[
     "figureWidth",
     "figures",
     "variations",
+    "arabicFallback",
+    "digits",
+    "keepArabicJoined",
 ];
 
 /// Paragraph attribute keys of `layer.setText`.
 pub const PARA_ATTRS: &[&str] =
-    &["justify", "indentLeft", "indentRight", "indentFirst", "spaceBefore", "spaceAfter", "direction", "composer", "hangingPunctuation"];
+    &["justify", "indentLeft", "indentRight", "indentFirst", "spaceBefore", "spaceAfter", "direction", "composer", "hangingPunctuation", "kashidaJustify"];
 
 /// Set one character attribute; Ok(false) for keys that aren't character attributes.
 pub fn apply_char_attr(s: &mut CharStyle, key: &str, v: &J) -> Result<bool, String> {
@@ -1101,6 +1167,9 @@ pub fn apply_char_attr(s: &mut CharStyle, key: &str, v: &J) -> Result<bool, Stri
             }
             _ => return Err("variations: expected {tag: number, …}".into()),
         },
+        "arabicFallback" => s.arabic_fallback = v.as_str().ok_or("arabicFallback: expected a string")?.to_string(),
+        "digits" => s.digit_style = v.as_str().and_then(DigitStyle::parse).ok_or("digits: expected western|arabicIndic")?,
+        "keepArabicJoined" => s.keep_arabic_joined = flag(key, v)?,
         k if k.len() == 4 && k.starts_with("ss") && k[2..].parse::<u32>().is_ok_and(|n| (1..=20).contains(&n)) => {
             let n = k[2..].parse::<u32>().unwrap_or(0);
             s.opentype.set_stylistic_set(n, flag(key, v)?);
@@ -1125,7 +1194,8 @@ pub fn apply_para_attr(p: &mut ParaStyle, key: &str, v: &J) -> Result<bool, Stri
             p.direction = match v.as_str().map(str::to_ascii_lowercase).as_deref() {
                 Some("ltr" | "lefttoright" | "left-to-right") => Direction::Ltr,
                 Some("rtl" | "righttoleft" | "right-to-left") => Direction::Rtl,
-                _ => return Err("direction: expected ltr|rtl".into()),
+                Some("auto") => Direction::Auto,
+                _ => return Err("direction: expected ltr|rtl|auto".into()),
             }
         }
         "composer" => {
@@ -1136,6 +1206,7 @@ pub fn apply_para_attr(p: &mut ParaStyle, key: &str, v: &J) -> Result<bool, Stri
             }
         }
         "hangingPunctuation" => p.hanging_punctuation = flag(key, v)?,
+        "kashidaJustify" => p.kashida_justify = flag(key, v)?,
         _ => return Ok(false),
     }
     Ok(true)
@@ -1159,6 +1230,7 @@ pub fn char_style_json(s: &CharStyle) -> J {
         "variations": s.variations.iter().map(|(t, v)| (t.clone(), J::from(*v as f64))).collect::<serde_json::Map<String, J>>(),
         "figureStyle": match s.opentype.figure_style { FigureStyle::Default => "default", FigureStyle::Lining => "lining", FigureStyle::OldStyle => "oldStyle" },
         "figureWidth": match s.opentype.figure_width { FigureWidth::Default => "default", FigureWidth::Proportional => "proportional", FigureWidth::Tabular => "tabular" },
+        "arabicFallback": s.arabic_fallback, "digits": s.digit_style.key(), "keepArabicJoined": s.keep_arabic_joined,
     })
 }
 
@@ -1167,9 +1239,10 @@ pub fn para_style_json(p: &ParaStyle) -> J {
     serde_json::json!({
         "justify": p.justify.key(), "indentLeft": p.indent_left, "indentRight": p.indent_right, "indentFirst": p.indent_first,
         "spaceBefore": p.space_before, "spaceAfter": p.space_after,
-        "direction": if p.direction == Direction::Rtl { "rtl" } else { "ltr" },
+        "direction": match p.direction { Direction::Rtl => "rtl", Direction::Auto => "auto", Direction::Ltr => "ltr" },
         "composer": if p.composer == Composer::EveryLine { "everyLine" } else { "singleLine" },
         "hangingPunctuation": p.hanging_punctuation,
+        "kashidaJustify": p.kashida_justify,
     })
 }
 

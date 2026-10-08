@@ -334,3 +334,26 @@ fn screen_suite_v2_snapshots() {
     h.run_steps(4);
     h.render().expect("render").save(format!("{dir}/v2-library1-editor.png")).unwrap();
 }
+
+#[test]
+fn window_menu_fits_1080p_and_screen_suite_is_near_the_top() {
+    let mut h = Harness::builder().with_size(egui::vec2(1920.0, 1080.0)).build_eframe(|_| {
+        let mut s = Session::default();
+        s.execute("comp.new", json!({"name": "Menu", "width": 320, "height": 180, "duration": 2})).unwrap();
+        EffectcraftApp::new(s)
+    });
+    h.run_steps(4);
+    click(&mut h, "menu.Window");
+    h.run_steps(4);
+    let suite = h.state().auto.find("menu.window.screenSuite").expect("Screen Suite in the open Window menu");
+    let lib = h.state().auto.find("menu.window.screenLibrary").expect("Screen Library in the open Window menu");
+    let suite_bottom = suite.rect[1] + suite.rect[3];
+    let lib_bottom = lib.rect[1] + lib.rect[3];
+    assert!(suite_bottom <= 1080.0, "Screen Suite clipped at y={suite_bottom}");
+    assert!(lib_bottom <= 1080.0, "Screen Library clipped at y={lib_bottom}");
+    assert!(suite.rect[1] < 1080.0 * 0.20, "Screen Suite y={} is not in the top 20% of 1080p", suite.rect[1]);
+    assert!(lib.rect[1] < 1080.0 * 0.20, "Screen Library y={} is not in the top 20% of 1080p", lib.rect[1]);
+    let dir = std::env::var("WINDOW_MENU_SNAP").unwrap_or_else(|_| "/opt/cursor/artifacts/screenshots".into());
+    std::fs::create_dir_all(&dir).unwrap();
+    h.render().expect("render").save(format!("{dir}/window-menu-1080p.png")).unwrap();
+}

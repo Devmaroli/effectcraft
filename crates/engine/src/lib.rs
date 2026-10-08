@@ -1050,16 +1050,18 @@ pub struct FontRow {
     /// Settings ▸ Type ▸ Show Font Names in English is off.
     pub display: String,
     pub recent: bool,
+    /// The face has Arabic init/medi/fina (a real Arabic text face, not Inter's cmap).
+    pub arabic: bool,
 }
 
 /// Outline polylines of "Sample" set in `family` at `size` px (baseline at y = 0, y down), for
 /// the font menu's preview (Settings ▸ Type ▸ Show Font Preview).
-pub fn font_preview(family: &str, size: f64) -> Vec<Vec<[f32; 2]>> {
+pub fn font_preview_text(family: &str, size: f64, sample: &str) -> Vec<Vec<[f32; 2]>> {
     use kurbo::PathEl;
     let st = effectcraft_keyframe::text_doc::CharStyle { font: family.to_string(), size, ..Default::default() };
     let mut out = vec![];
     let mut x = 0.0;
-    for ch in "Sample".chars() {
+    for ch in sample.chars() {
         let (path, adv) = effectcraft_text::char_glyph_style(&st, ch);
         let mut cur: Vec<[f32; 2]> = vec![];
         let pt = |p: kurbo::Point| [(p.x + x) as f32, p.y as f32];
@@ -1089,15 +1091,27 @@ pub fn font_preview(family: &str, size: f64) -> Vec<Vec<[f32; 2]>> {
     out
 }
 
+pub fn font_preview(family: &str, size: f64) -> Vec<Vec<[f32; 2]>> {
+    font_preview_text(family, size, "Sample")
+}
+
 /// The Character panel's font menu: the recent fonts (Settings ▸ Type ▸ Number of Recent Fonts
 /// to Display), a separator, then every family.
 pub fn font_menu(prefs: &prefs::Prefs) -> Vec<FontRow> {
     let all = text_families();
     let native = if prefs.type_.font_names_in_english { Default::default() } else { effectcraft_text::fonts::native_families() };
-    let row = |f: &String, recent: bool| FontRow { family: f.clone(), display: native.get(f).cloned().unwrap_or_else(|| f.clone()), recent };
+    let row = |f: &String, recent: bool| {
+        let face = effectcraft_text::resolve(f, "Regular").face;
+        FontRow {
+            family: f.clone(),
+            display: native.get(f).cloned().unwrap_or_else(|| f.clone()),
+            recent,
+            arabic: effectcraft_text::arabic::is_arabic_capable(face),
+        }
+    };
     let mut out: Vec<FontRow> = prefs.recent_fonts_shown().iter().filter(|f| all.contains(f)).map(|f| row(f, true)).collect();
     if !out.is_empty() {
-        out.push(FontRow { family: String::new(), display: "-".into(), recent: false });
+        out.push(FontRow { family: String::new(), display: "-".into(), recent: false, arabic: false });
     }
     out.extend(all.iter().map(|f| row(f, false)));
     out

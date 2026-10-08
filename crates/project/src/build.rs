@@ -172,7 +172,7 @@ pub fn text_animator(ids: &mut Ids, name: &str, props: Vec<Property>) -> PropGro
     g.with(sels).with(pg)
 }
 
-const BASED_ON: &[&str] = &["Characters", "Characters Excluding Spaces", "Words", "Lines"];
+const BASED_ON: &[&str] = &["Characters", "Characters Excluding Spaces", "Words", "Lines", "Characters (keep joins)"];
 const SEL_MODES: &[&str] = &["Add", "Subtract", "Intersect", "Min", "Max", "Difference"];
 
 pub fn range_selector(ids: &mut Ids, name: &str) -> PropGroup {

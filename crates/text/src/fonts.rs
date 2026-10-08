@@ -494,6 +494,7 @@ enum FallbackScript {
     /// Han ideographs, CJK punctuation and full-width forms: shared by Japanese, Chinese and
     /// Korean; the locale decides which family to try first.
     Han,
+    Arabic,
     Other,
 }
 
@@ -510,6 +511,7 @@ fn script_of(c: char) -> FallbackScript {
         | 0xFE30..=0xFE4F
         | 0xFF00..=0xFFEF
         | 0x20000..=0x3FFFF => FallbackScript::Han,
+        0x0600..=0x06FF | 0x0750..=0x077F | 0x08A0..=0x08FF | 0xFB50..=0xFDFF | 0xFE70..=0xFEFF => FallbackScript::Arabic,
         _ => FallbackScript::Other,
     }
 }
@@ -548,6 +550,7 @@ const CHINESE_FAMILIES: &[&str] = &[
     "WenQuanYi Micro Hei",
 ];
 const KOREAN_FAMILIES: &[&str] = &["Malgun Gothic", "Gulim", "Apple SD Gothic Neo", "Noto Sans CJK KR", "Noto Sans KR", "Source Han Sans KR", "NanumGothic"];
+const ARABIC_FAMILIES: &[&str] = crate::arabic::ARABIC_FALLBACK_FAMILIES;
 
 /// The CJK language to try first for Han ideographs, from the locale environment (`LANG`,
 /// `LC_ALL`, `LC_CTYPE`; `EFFECTCRAFT_CJK_LOCALE` overrides them). Japanese when nothing says
@@ -574,6 +577,7 @@ fn families_for(s: FallbackScript) -> &'static [&'static str] {
         FallbackScript::Japanese => JAPANESE_FAMILIES,
         FallbackScript::Han => CHINESE_FAMILIES,
         FallbackScript::Korean => KOREAN_FAMILIES,
+        FallbackScript::Arabic => ARABIC_FAMILIES,
         FallbackScript::Other => &[],
     }
 }
@@ -751,6 +755,7 @@ mod tests {
         assert_eq!(script_of('\u{20000}'), FallbackScript::Han);
         assert_eq!(script_of('A'), FallbackScript::Other);
         assert_eq!(script_of('\u{5d0}'), FallbackScript::Other);
+        assert_eq!(script_of('ع'), FallbackScript::Arabic);
     }
 
     /// Native: Japanese text in a Latin-only family falls back to an installed Japanese family

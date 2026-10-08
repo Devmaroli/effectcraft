@@ -88,6 +88,9 @@ pub struct TextStyle {
     /// Variable font axis values (tag, user units): shaping (advances through HVAR / gvar
     /// phantom points) and outlines use this design-space position.
     pub variations: Vec<(String, f32)>,
+    pub arabic_fallback: String,
+    pub digit_style: effectcraft_keyframe::DigitStyle,
+    pub keep_arabic_joined: bool,
 }
 
 impl Default for TextStyle {
@@ -113,6 +116,9 @@ impl Default for TextStyle {
             leading: None,
             opentype: OpenType::default(),
             variations: Vec::new(),
+            arabic_fallback: String::new(),
+            digit_style: effectcraft_keyframe::DigitStyle::Western,
+            keep_arabic_joined: false,
         }
     }
 }
@@ -162,6 +168,8 @@ pub struct ParagraphStyle {
     pub every_line: bool,
     /// Roman hanging punctuation.
     pub hanging: bool,
+    /// Insert tatweel when justifying an Arabic / RTL line.
+    pub kashida_justify: bool,
 }
 
 impl Default for ParagraphStyle {
@@ -179,6 +187,7 @@ impl Default for ParagraphStyle {
             space_after: 0.0,
             every_line: false,
             hanging: false,
+            kashida_justify: false,
         }
     }
 }
@@ -202,6 +211,9 @@ impl Hash for TextStyle {
             t.hash(h);
             hf(h, *v);
         }
+        self.arabic_fallback.hash(h);
+        self.digit_style.hash(h);
+        self.keep_arabic_joined.hash(h);
     }
 }
 
@@ -212,7 +224,7 @@ impl Hash for ParagraphStyle {
             hf(h, v);
         }
         self.width.map(f32::to_bits).hash(h);
-        (self.rtl, self.every_line, self.hanging).hash(h);
+        (self.rtl, self.every_line, self.hanging, self.kashida_justify).hash(h);
     }
 }
 
@@ -348,6 +360,7 @@ fn line_dist(l: &Line, y: f32) -> f32 {
     }
 }
 
+#[derive(Clone)]
 struct ShapedGlyph {
     face: FaceId,
     id: u32,
@@ -547,7 +560,7 @@ fn space_item(glyphs: &mut [ShapedGlyph], style: &TextStyle, text: &str, para_st
             }
         }
     }
-    if style.tracking != 0.0 {
+    if style.tracking != 0.0 && !(style.keep_arabic_joined && style.tracking > 0.0) {
         let t = style.tracking * style.size / 1000.0;
         for k in 0..glyphs.len() {
             if k + 1 == glyphs.len() || glyphs[k + 1].cluster != glyphs[k].cluster {
@@ -555,6 +568,30 @@ fn space_item(glyphs: &mut [ShapedGlyph], style: &TextStyle, text: &str, para_st
             }
         }
     }
+}
+
+/// Tracking as tatweel between joining Arabic letters (Character ▸ Keep Arabic letters joined).
+fn insert_tracking_kashida(glyphs: &mut Vec<ShapedGlyph>, style: &TextStyle, text: &str) {
+    if !style.keep_arabic_joined || style.tracking <= 0.0 || glyphs.is_empty() {
+        return;
+    }
+    let t = style.tracking * style.size / 1000.0;
+    let face = glyphs[0].face;
+    let Some(kid) = fonts::face(face).glyph('\u{0640}') else { return };
+    let mut out = Vec::with_capacity(glyphs.len().saturating_mul(2));
+    for i in 0..glyphs.len() {
+        let g = glyphs[i].clone();
+        let ch = text.get(g.cluster..).and_then(|s| s.chars().next());
+        let next_ch = glyphs.get(i + 1).and_then(|n| text.get(n.cluster..).and_then(|s| s.chars().next()));
+        out.push(g.clone());
+        if ch.is_some_and(crate::arabic::can_take_kashida_after)
+            && next_ch.is_some_and(crate::arabic::is_arabic_letter)
+            && glyphs.get(i + 1).is_some_and(|n| n.face == g.face)
+        {
+            out.push(ShapedGlyph { face, id: kid, cluster: g.cluster, adv: t, pre: 0.0, dx: 0.0, dy: 0.0, size: g.size, run: g.run, rise: g.rise });
+        }
+    }
+    *glyphs = out;
 }
 
 struct ParaLine {
@@ -590,7 +627,7 @@ fn run_at(runs: &[(Range<usize>, TextStyle)], b: usize) -> usize {
 
 /// Lay out one paragraph (no newlines) whose text starts at byte `base` of the whole string.
 fn paragraph(text: &str, base: usize, runs: &[(Range<usize>, TextStyle)], primaries: &[Resolved], para: &ParagraphStyle, width: Option<f32>) -> Vec<ParaLine> {
-    let rtl_para = para.rtl == Some(true);
+    let rtl_para = para.rtl.unwrap_or_else(|| crate::arabic::first_strong_rtl(text) == Some(true));
     let margins_for = |first: bool| -> (f32, f32) {
         let fi = if first { para.indent_first } else { 0.0 };
         if rtl_para { (para.indent_end, para.indent_start + fi) } else { (para.indent_start + fi, para.indent_end) }
@@ -630,7 +667,8 @@ fn paragraph(text: &str, base: usize, runs: &[(Range<usize>, TextStyle)], primar
         }];
     }
     let default_level = para.rtl.map(|r| if r { Level::rtl() } else { Level::ltr() });
-    let bidi = BidiInfo::new(text, default_level);
+    let mut bidi = BidiInfo::new(text, default_level);
+    crate::arabic::pin_western_numerals_ltr(text, &mut bidi.levels);
     let pinfo = &bidi.paragraphs[0];
     let base_rtl = pinfo.level.is_rtl();
     // per char: (byte, char, shaped char, face, rtl, form, run)
@@ -652,7 +690,16 @@ fn paragraph(text: &str, base: usize, runs: &[(Range<usize>, TextStyle)], primar
                 _ if small_cap => (c, Form::FauxSmall),
                 _ => (c, Form::Normal),
             };
-            let face = face_of(sc);
+            let sc = match style.digit_style {
+                effectcraft_keyframe::DigitStyle::ArabicIndic if crate::arabic::is_western_digit(sc) => crate::arabic::to_arabic_indic_digit(sc),
+                effectcraft_keyframe::DigitStyle::Western if crate::arabic::is_arabic_indic_digit(sc) => crate::arabic::to_western_digit(sc),
+                _ => sc,
+            };
+            let face = if crate::arabic::is_arabic_letter(sc) && !style.arabic_fallback.is_empty() {
+                crate::arabic::arabic_run_face(sc, primary, &style.arabic_fallback, &style.style)
+            } else {
+                face_of(sc)
+            };
             if form == Form::Normal && style.script != Script::Normal && !sc.is_whitespace() {
                 let tag = if style.script == Script::Sub { b"subs" } else { b"sups" };
                 if feature_substitutes(face, tag, sc) {
@@ -682,6 +729,7 @@ fn paragraph(text: &str, base: usize, runs: &[(Range<usize>, TextStyle)], primar
         };
         let mut glyphs = shape_item(&sub, rtl, face, size, style, si, form);
         space_item(&mut glyphs, style, text, true);
+        insert_tracking_kashida(&mut glyphs, style, text);
         let end = if j < chars.len() { chars[j].0 } else { text.len() };
         items.push(Item { range: chars[i].0..end, rtl, glyphs });
         i = j;
@@ -800,12 +848,28 @@ fn paragraph(text: &str, base: usize, runs: &[(Range<usize>, TextStyle)], primar
         let content = range_w(r.start..ce);
         // justification
         let mut space_extra = 0.0;
+        let mut kashida_extra = 0.0;
         if align == Align::Justify
             && let Some(maxw) = avail
         {
-            let spaces = text[r.start..ce].chars().filter(|c| *c == ' ').count();
-            if spaces > 0 {
-                space_extra = ((maxw - (content - hang.0 - hang.1)) / spaces as f32).max(0.0);
+            let slack = (maxw - (content - hang.0 - hang.1)).max(0.0);
+            let joins = if para.kashida_justify {
+                text[r.start..ce]
+                    .chars()
+                    .collect::<Vec<_>>()
+                    .windows(2)
+                    .filter(|w| crate::arabic::can_take_kashida_after(w[0]) && crate::arabic::is_arabic_letter(w[1]))
+                    .count()
+            } else {
+                0
+            };
+            if joins > 0 {
+                kashida_extra = slack / joins as f32;
+            } else {
+                let spaces = text[r.start..ce].chars().filter(|c| *c == ' ').count();
+                if spaces > 0 {
+                    space_extra = slack / spaces as f32;
+                }
             }
         }
         let (levels, vruns) = bidi.visual_runs(pinfo, r.clone());
@@ -841,6 +905,32 @@ fn paragraph(text: &str, base: usize, runs: &[(Range<usize>, TextStyle)], primar
                     pen += g.adv;
                     if space_extra > 0.0 && text[g.cluster..].starts_with(' ') && g.cluster < ce {
                         pen += space_extra;
+                    }
+                    if kashida_extra > 0.0
+                        && let Some(ch) = text.get(g.cluster..).and_then(|s| s.chars().next())
+                        && crate::arabic::can_take_kashida_after(ch)
+                        && let Some(nxt) = text[g.cluster..].chars().nth(1)
+                        && crate::arabic::is_arabic_letter(nxt)
+                        && let Some(kid) = fonts::face(g.face).glyph('\u{0640}')
+                    {
+                        let x0k = pen;
+                        glyphs.push(Glyph {
+                            face: g.face,
+                            id: kid,
+                            x: pen,
+                            y: -g.rise,
+                            size: g.size,
+                            cluster: base + g.cluster,
+                            synth_bold: primaries[g.run].synth_bold || st.faux_bold,
+                            synth_italic: primaries[g.run].synth_italic || st.faux_italic,
+                            h_scale: st.h_scale,
+                            v_scale: st.v_scale,
+                            run: g.run,
+                            variations: crate::variable::intern(&st.variations),
+                        });
+                        pen += kashida_extra;
+                        let e = extents.entry(g.cluster).or_insert((x0k, pen, items[k].rtl));
+                        e.1 = e.1.max(pen);
                     }
                     if st.underline && g.cluster < ce {
                         let u = underline.get_or_insert((x0, pen));

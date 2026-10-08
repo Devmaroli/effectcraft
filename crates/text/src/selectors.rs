@@ -89,6 +89,8 @@ pub enum BasedOn {
     CharactersExcludingSpaces,
     Words,
     Lines,
+    /// Per shaped cluster: ligatures and joined Arabic letters stay one unit.
+    CharactersKeepJoins,
 }
 
 impl BasedOn {
@@ -97,6 +99,7 @@ impl BasedOn {
             1 => BasedOn::CharactersExcludingSpaces,
             2 => BasedOn::Words,
             3 => BasedOn::Lines,
+            4 => BasedOn::CharactersKeepJoins,
             _ => BasedOn::Characters,
         }
     }

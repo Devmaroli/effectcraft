@@ -150,6 +150,33 @@ fn dump_specs() {
 }
 
 #[test]
+fn screen_suite_is_in_the_top_fifth_of_the_window_menu() {
+    let tree = parse(TREE, false).unwrap();
+    let window = tree
+        .iter()
+        .find_map(|n| match n {
+            MenuNode::Submenu { label, children } if label == "Window" => Some(children.as_slice()),
+            _ => None,
+        })
+        .expect("Window menu");
+    let rows: Vec<String> = window
+        .iter()
+        .map(|n| match n {
+            MenuNode::Item(e) => e.label.clone(),
+            MenuNode::Submenu { label, .. } => label.clone(),
+            MenuNode::Dynamic { name } => format!("@{name}"),
+            MenuNode::Separator => "---".into(),
+        })
+        .collect();
+    let n = rows.len().max(1);
+    let suite = rows.iter().position(|l| l == "Screen Suite").expect("Screen Suite");
+    let lib = rows.iter().position(|l| l == "Screen Library").expect("Screen Library");
+    assert!(suite * 5 < n, "Screen Suite at {suite} of {n}: {rows:?}");
+    assert!(lib * 5 < n, "Screen Library at {lib} of {n}: {rows:?}");
+    assert!(suite < lib);
+}
+
+#[test]
 fn parse_rejects_bad_trees() {
     assert!(parse("File\n  Empty\n", true).is_err());
     assert!(parse("File\n   Odd | file.save\n", true).is_err());

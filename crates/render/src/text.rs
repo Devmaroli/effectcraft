@@ -124,6 +124,7 @@ fn unit_of(based: BasedOn, g: &CharGlyph, lay: &TextLayout) -> (usize, usize) {
         BasedOn::CharactersExcludingSpaces => (g.char_index_no_space.min(lay.chars_no_space.saturating_sub(1)), lay.chars_no_space),
         BasedOn::Words => (g.word_index, lay.words),
         BasedOn::Lines => (g.line_index, lay.lines),
+        BasedOn::CharactersKeepJoins => (g.cluster_index, lay.clusters.max(1)),
     }
 }
 
@@ -133,6 +134,7 @@ fn unit_count(based: BasedOn, lay: &TextLayout) -> usize {
         BasedOn::CharactersExcludingSpaces => lay.chars_no_space,
         BasedOn::Words => lay.words,
         BasedOn::Lines => lay.lines,
+        BasedOn::CharactersKeepJoins => lay.clusters,
     }
 }
 
