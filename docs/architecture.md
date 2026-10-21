@@ -1,6 +1,6 @@
 # Architecture
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (crate table checked against `crates/`: effect count 306, VP9 inter frames) · **Target:** Adobe After Effects 2026
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-21 · **Change:** minor (`encodecraft-job` at L0) · **Target:** Adobe After Effects 2026
 
 EffectCraft is a stack of small Rust crates. The engine knows nothing about the user interface;
 the egui frontend, the command-line tool and the MCP server all sit on top of the same `Session`
@@ -22,6 +22,7 @@ cpal or muda. Everything in L0 to L4, the egui UI and the web app also build for
 | L0 | `opusenc` | Opus encoder: RFC 6716 SILK (NB/MB/WB), hybrid (SWB/FB) and CELT (FB) modes chosen by bitrate and application (audio / voice), 48 kHz 20 ms packets, mono/stereo, and the RFC 7845 `OpusHead`, for WebM export audio |
 | L0 | `hevcenc` | HEVC (H.265) encoder from ITU-T H.265: Main / Main 10 4:2:0, IDR + P slices (quarter-pel motion, merge/AMVP), CABAC, deblocking, bitrate or constant-QP rate control, for MP4 (`hvc1`) export |
 | L0 | `av1enc` | AV1 encoder from the AV1 bitstream specification: Main profile 8/10-bit 4:2:0, key + inter frames (quarter-pel motion), deblocking, for MP4 (`av01`) and WebM export |
+| L0 | `encodecraft-job` | EncodeCraft queue-job JSON: schema, preset id, and the loopback enqueue body. Serde only on wasm; native builds locate the EncodeCraft data directory |
 | L1 | `raster` | Premultiplied float images, sampling, affine and projective warps, blurs, compositing (parallel with rayon) |
 | L1 | `keyframe` | Animated values, keyframes with temporal ease and spatial Bezier, roving, hold, velocity |
 | L1 | `segment` | Swappable trained models for Roto Brush and face tracking: the `MaskModel` and `FaceModel` interfaces, a registry of open-licensed models (authors, licence, URL, size, SHA-256), PyTorch checkpoint and TensorFlow Lite readers (with an interpreter), SHA-256, MobileSAM (TinyViT + Segment Anything decoder) and MediaPipe Face Landmarker (BlazeFace + Face Mesh V2) on rayon and ndarray's safe GEMM |

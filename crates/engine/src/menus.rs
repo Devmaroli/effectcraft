@@ -550,6 +550,7 @@ File
     Clear Recent Footage | file.clearRecentFootage
   Export
     Add to Render Queue | renderQueue.add
+    Add to EncodeCraft Queue | encodecraft.queue
     Adobe Premiere Pro Project... | file.exportTimeline
     Lottie JSON... | file.exportLottie
     Essential Graphics Template... | essential.exportTemplate
@@ -697,6 +698,7 @@ Composition
   Crop Comp to Selected Layer(s) Bounds | comp.cropToLayerBounds
   ---
   Add to Render Queue | renderQueue.add
+  Add to EncodeCraft Queue | encodecraft.queue
   Add Output Module | render.addOutputModule
   ---
   Preview

@@ -866,6 +866,10 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
                 actions.push(("comp.open".into(), json!({"comp": id.0})));
                 ui.close();
             }
+            if matches!(it.kind, ItemKind::Comp(_)) && ui.button(crate::i18n::tr("Add to EncodeCraft Queue")).clicked() {
+                actions.push(("encodecraft.queue".into(), json!({"comp": id.0})));
+                ui.close();
+            }
             if ui.button(crate::i18n::tr("Rename")).clicked() {
                 ctx.data_mut(|d| d.insert_temp::<Editing>(edit_id(), (id.0, "name".into(), it.name.clone())));
                 ui.close();
@@ -966,10 +970,26 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         && let Some(it) = app.session.project.item(ItemId(*iid))
     {
         let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("dnd-ghost")));
-        let g = painter.layout_no_wrap(it.name.clone(), Tokens::ui(12.0), t.text);
+        let ghost = match &it.kind {
+            ItemKind::Comp(_) => crate::i18n::tr_args("{} — release outside the window to add to EncodeCraft", &[&it.name]),
+            _ => it.name.clone(),
+        };
+        let g = painter.layout_no_wrap(ghost, Tokens::ui(12.0), t.text);
         let r = Rect::from_min_size(pos + vec2(12.0, 8.0), g.size() + vec2(16.0, 8.0));
         painter.rect_filled(r, 4.0, Color32::from_rgba_premultiplied(40, 40, 40, 230));
         painter.galley(r.min + vec2(8.0, 4.0), g, t.text);
+    }
+    // Releasing a composition outside this window is the drop onto EncodeCraft.
+    // egui's drag payload cannot cross into EncodeCraft's process, so the release
+    // runs encodecraft.queue for that composition (loopback HTTP, or the inbox).
+    // A footage drag, or a release that is still inside the window, is left alone.
+    if let Some(DragPayload::Item(iid)) = egui::DragAndDrop::payload::<DragPayload>(&ctx).as_deref()
+        && ctx.input(|i| i.pointer.any_released())
+        && ctx.pointer_hover_pos().is_none()
+        && app.session.project.item(ItemId(*iid)).is_some_and(|it| matches!(it.kind, ItemKind::Comp(_)))
+    {
+        actions.push(("encodecraft.queue".into(), json!({"comp": *iid, "launch": true})));
+        egui::DragAndDrop::clear_payload(&ctx);
     }
     // Footer.
     let foot = Rect::from_min_max(pos2(rect.min.x, rect.max.y - footer_h), rect.max);
